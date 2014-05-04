@@ -79,12 +79,16 @@ local function menuDropDownPosition(event)
   return ide.frame:ScreenToClient(tb:ClientToScreen(rect:GetBottomLeft()))
 end
 
+
 local function createToolBar(frame)
   local toolBar = wxaui.wxAuiToolBar(frame, wx.wxID_ANY, wx.wxDefaultPosition, wx.wxDefaultSize,
     wxaui.wxAUI_TB_PLAIN_BACKGROUND)
   -- wxChoice is a bit too narrow on Linux, so make it a bit larger
   local funclist = wx.wxChoice.new(toolBar, ID "toolBar.funclist",
     wx.wxDefaultPosition, wx.wxSize.new(240, ide.osname == 'Unix' and 28 or 24))
+
+  local searchbox = wx.wxTextCtrl.new(toolBar, ID_SEARCHBOX )
+	searchbox:SetSize( wx.wxSize.new(240, ide.osname == 'Unix' and 28 or 24) )
   
   -- there are two sets of icons: use 24 on OSX and 16 on others.
   local toolBmpSize =
@@ -116,6 +120,7 @@ local function createToolBar(frame)
   end
   toolBar:AddSeparator()
   toolBar:AddControl(funclist)
+  toolBar:AddControl(searchbox)
 
   toolBar:SetToolDropDown(ID_OPEN, true)
   toolBar:Connect(ID_OPEN, wxaui.wxEVT_COMMAND_AUITOOLBAR_TOOL_DROPDOWN, function(event)
@@ -139,9 +144,45 @@ local function createToolBar(frame)
     end
   end)
 
+
+  searchbox:Connect( ID_SEARCHBOX, wx.wxEVT_COMMAND_TEXT_UPDATED, function(event)
+		local findText = event:GetString();
+		if findText ~= "" then
+			local editor = GetEditor()
+			local posFind = editor:SearchInTarget(findText)
+			if posFind == -1 then
+				editor:SetTargetStart(iff(fDown, 0, editor:GetLength()))
+				editor:SetTargetEnd(iff(fDown, editor:GetLength(), 0))
+				posFind = editor:SearchInTarget(findText)
+			end
+			if posFind == -1 then
+				ide.frame:SetStatusText(TR("Text not found."))
+				editor:ClearSelections()
+			else
+				local start = editor:GetTargetStart()
+				local finish = editor:GetTargetEnd()
+				EnsureRangeVisible(start, finish)
+				editor:SetSelection(start, finish)
+				ide.frame:SetStatusText("")
+			end
+		end
+		return true
+	end)
+
+  searchbox:Connect( ID_SEARCHBOX, wx.wxEVT_KEY_DOWN, function(event)
+		if event:GetKeyCode() == 27 then			
+			local editor = GetEditor()
+			editor:SetFocus()
+			return false
+		end
+		event:Skip()
+		
+	end)
+
   toolBar:GetArtProvider():SetElementSize(wxaui.wxAUI_TBART_GRIPPER_SIZE, 0)
   toolBar:Realize()
 
+  toolBar.searchbox = searchbox;
   toolBar.funclist = funclist
   frame.toolBar = toolBar
   return toolBar

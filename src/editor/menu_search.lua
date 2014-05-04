@@ -28,9 +28,23 @@ menuBar:Append(findMenu, TR("&Search"))
 
 local function onUpdateUISearchMenu(event) event:Enable(GetEditor() ~= nil) end
 
+
 frame:Connect(ID_FIND, wx.wxEVT_COMMAND_MENU_SELECTED,
   function (event)
-    findReplace:Show(false)
+		local searchbox = ide.frame.toolBar.searchbox;
+		local focus = wx.wxWindow.FindFocus()
+		local editor = GetEditor()
+		if editor and focus:GetId() == editor:GetId() then
+			local startSel = editor:GetSelectionStart()
+			local endSel = editor:GetSelectionEnd()
+			if (startSel ~= endSel) and (editor:LineFromPosition(startSel) == editor:LineFromPosition(endSel)) then
+				searchbox:SetValue( editor:GetTextRange(startSel, endSel) )
+			end
+		end
+  
+		searchbox:SetFocus();
+		searchbox:SetSelection( 0, searchbox:GetLastPosition() );
+    --findReplace:Show(false)
   end)
 frame:Connect(ID_FIND, wx.wxEVT_UPDATE_UI, onUpdateUISearchMenu)
 
@@ -51,6 +65,12 @@ frame:Connect(ID_REPLACEINFILES, wx.wxEVT_COMMAND_MENU_SELECTED,
 
 frame:Connect(ID_FINDNEXT, wx.wxEVT_COMMAND_MENU_SELECTED,
   function (event)
+	local searchbox = ide.frame.toolBar.searchbox;
+	local focus = wx.wxWindow.FindFocus()
+	if focus:GetId() == searchbox:GetId() then
+		searchbox:SetSelection( 0, searchbox:GetLastPosition() );		
+	end
+		
     local editor = GetEditor()
     if editor and ide.wxver >= "2.9.5" and editor:GetSelections() > 1 then
       local selection = editor:GetMainSelection() + 1

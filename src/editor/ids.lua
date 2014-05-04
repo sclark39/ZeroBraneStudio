@@ -124,6 +124,7 @@ ID_RENAMEALLINSTANCES = NewID()
 ID_QUICKADDWATCH    = NewID()
 ID_QUICKEVAL        = NewID()
 ID_ADDTOSCRATCHPAD  = NewID()
+ID_SEARCHBOX		= NewID()
 
 local ids = {}
 function ID (name)
