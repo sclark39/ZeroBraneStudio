@@ -535,6 +535,18 @@ function FoldSome()
   editor:EnsureCaretVisible()
 end
 
+function EnsureLineBlockVisible(startLine,numLines)
+  local editor = GetEditor()
+  numLines = math.max( numLines or 0, 1 )
+
+  for i=1,numLines do
+	editor:EnsureVisibleEnforcePolicy(startLine+i)
+  end
+  
+  local topOfPage = startLine - math.floor( editor:LinesOnScreen() / 2 ) + numLines 
+  editor:SetFirstVisibleLine( math.min( startLine, topOfPage ) )
+end
+
 function EnsureRangeVisible(posStart, posEnd)
   local editor = GetEditor()
   if posStart > posEnd then
@@ -543,9 +555,7 @@ function EnsureRangeVisible(posStart, posEnd)
 
   local lineStart = editor:LineFromPosition(posStart)
   local lineEnd = editor:LineFromPosition(posEnd)
-  for line = lineStart, lineEnd do
-    editor:EnsureVisibleEnforcePolicy(line)
-  end
+  EnsureLineBlockVisible( lineStart, lineEnd - lineStart )
 end
 
 function SetAllEditorsReadOnly(enable)

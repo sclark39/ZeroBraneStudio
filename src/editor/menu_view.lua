@@ -81,7 +81,20 @@ frame:Connect(ID_VIEWMINIMIZE, wx.wxEVT_COMMAND_MENU_SELECTED,
   function (event) ide.frame:Iconize(true) end)
 
 frame:Connect(ID_VIEWFULLSCREEN, wx.wxEVT_COMMAND_MENU_SELECTED, function ()
-    ShowFullScreen(not frame:IsFullScreen())
+    --ShowFullScreen(not frame:IsFullScreen())
+	
+    local editor = GetEditor()
+	
+	local numlines = editor:LinesOnScreen()
+	local currentpos = editor:GetCurrentPos()
+	local centerline = editor:LineFromPosition( currentpos )
+	
+	local startline = centerline - math.floor( numlines/2 )
+	local endline = startline + numlines - 1
+	
+	editor:SetFirstVisibleLine( startline )
+	DisplayOutputLn( tostring( editor:LinesOnScreen() ) )
+	
   end)
 frame:Connect(ID_VIEWFULLSCREEN, wx.wxEVT_UPDATE_UI,
   function (event) event:Enable(GetEditor() ~= nil) end)
