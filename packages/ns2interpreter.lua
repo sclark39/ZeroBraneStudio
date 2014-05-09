@@ -7,7 +7,7 @@ local interpreter = {
 	--local workDir = self:fworkdir(wfilename)
 	local workDir = MergeFullPath(ide:GetProject(), "output")
 	if not wx.wxDirExists( workDir ) then
-		workDir = ide:GetProject()
+		workDir = string.sub( ide:GetProject(), 1, -2 )
 	end
     CommandLineRun(	'"'.. NS2Dir .. 'ns2.exe" -game "' ..workDir.. '"', NS2Dir, true, false)
   end,
