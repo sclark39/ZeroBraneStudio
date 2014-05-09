@@ -4,14 +4,19 @@ local interpreter = {
   api = {"baselib", "sample"},
   frun = function(self,wfilename,rundebug)
 	local NS2Dir =  "C:\\Program Files (x86)\\Steam\\steamapps\\common\\natural selection 2\\"
-    CommandLineRun(	'"'.. NS2Dir .. 'ns2.exe" -game "' ..self:fworkdir(wfilename) .. '"', NS2Dir, true, false)
+	--local workDir = self:fworkdir(wfilename)
+	local workDir = MergeFullPath(ide:GetProject(), "output")
+	if not wx.wxDirExists( workDir ) then
+		workDir = ide:GetProject()
+	end
+    CommandLineRun(	'"'.. NS2Dir .. 'ns2.exe" -game "' ..workDir.. '"', NS2Dir, true, false)
   end,
   fprojdir = function(self,wfilename)  
     return wfilename:GetPath(wx.wxPATH_GET_VOLUME)
   end,
   fworkdir = function (self,wfilename)
     return ide.config.path.projectdir or wfilename:GetPath(wx.wxPATH_GET_VOLUME)
-  end,
+  end,  
   hasdebugger = true,
   skipcompile = true,  
 }
