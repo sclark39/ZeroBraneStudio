@@ -546,8 +546,9 @@ function findReplace:createDialog(replace,infiles)
 
   findDialog:Connect(ID_FIND_NEXT, wx.wxEVT_COMMAND_BUTTON_CLICKED,
     function()
-      TransferDataFromWindow()
+      TransferDataFromWindow()	   
       if (findReplace.infiles) then
+        if ide.frame.menuBar:IsChecked(ID_CLEAROUTPUT) then ClearOutput() end	  
         for _, b in pairs(findReplace.buttons) do b:Disable() end
         findReplace:RunInFiles()
         findReplace.dialog:Destroy()
@@ -561,8 +562,9 @@ function findReplace:createDialog(replace,infiles)
     function(event)
       TransferDataFromWindow()
       event:Skip()
-      if findReplace.replace then
+      if findReplace.replace then		
         if (findReplace.infiles) then
+		  if ide.frame.menuBar:IsChecked(ID_CLEAROUTPUT) then ClearOutput() end
           for _, b in pairs(findReplace.buttons) do b:Disable() end
           findReplace:RunInFiles(true)
           findReplace.dialog:Destroy()
