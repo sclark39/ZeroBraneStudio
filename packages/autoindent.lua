@@ -1,11 +1,18 @@
+-- This needs to be rewritten.
+--  http://www.freehackers.org/Indent_Finder
+--  https://github.com/gfxmonk/indent-finder/blob/master/indent_finder.py
+
 local function CountIndent( editor, char )
   local spaces, pspaces, pdiff = {}, 0, 0
   for line = 0, math.min(100, editor:GetLineCount())-1 do
-    local tspaces = #(editor:GetLine(line):match("^["..char.."]*"))
+    local tspaces = #(editor:GetLine(line):match("^["..char.."]*"))    
     local tdiff = math.abs(tspaces-pspaces)
-    if tdiff > 0 then pdiff = tdiff end
-    if pdiff > 0 and pdiff <= 8 then spaces[pdiff] = (spaces[pdiff] or 0) + 1 end
+    if tdiff > 0 then 
+      pdiff = tdiff 
+      if pdiff > 0 and pdiff <= 8 then spaces[pdiff] = (spaces[pdiff] or 0) + 1 end  
+    end    
     pspaces = tspaces
+    DisplayOutputLn( string.format( "%d, %d, %d, %d", line, tspaces, tdiff, pdfif ) )
   end
 
   local maxv, maxn = 0
@@ -19,10 +26,11 @@ return {
   description = "Sets editor indentation based on file text analysis.",
   author = "Paul Kulchenko",
   version = 0.1,
-
+--[[
   onEditorLoad = function(self, editor)
 	local numSpaces, numSpacesCount = CountIndent(editor, " ")
 	local numTabs, numTabsCount = CountIndent(editor, "\t")
+    DisplayOutputLn( string.format( "%d, %d, %d, %d ", numSpaces, numSpacesCount, numTabs, numTabsCount ) )
 	
     if numTabsCount > numSpacesCount then		
       numSpaces = nil
@@ -41,6 +49,7 @@ return {
     
     editor:SetUseTabs(useTabs)
     editor:SetIndent(indent)
-    --DisplayOutputLn( "Auto-Indent Set To "..tostring(indent).." using "..(useTabs and "Tabs" or "Spaces") )
+    DisplayOutputLn( "Auto-Indent Set To "..tostring(indent).." using "..(useTabs and "Tabs" or "Spaces") )
   end,
+  ]]--
 }
