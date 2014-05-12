@@ -8,19 +8,22 @@ local IMG_DIRECTORY = 0
 	version = 0.1, 
 	onFiletreeLDown = 
 		function(self, tree, event, item_id ) 
-			if item_id then
-			  tree:SelectItem(item_id)
-			  tree:SetFocus()
+			local mask = wx.wxTREE_HITTEST_ONITEMINDENT
+				+ wx.wxTREE_HITTEST_ONITEMICON + wx.wxTREE_HITTEST_ONITEMRIGHT
+			local item_id, flags = tree:HitTest(event:GetPosition())
+			if item_id and bit.band(flags, mask) > 0 then
+				tree:SelectItem(item_id)
+				tree:SetFocus()
+			else  
+				event:Skip()
 			end
-			event:Skip()
 			return false
-		end, 
+		end,
 	onFiletreeLDClick = 
 		function (self, tree, event, item_id)
 			if tree:GetItemImage(item_id) == IMG_DIRECTORY then
 				tree:Toggle(item_id)
 				tree:SelectItem(item_id)
-				
 			else
 				tree:ActivateItem(item_id)
 			end
