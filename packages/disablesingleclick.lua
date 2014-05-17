@@ -8,14 +8,14 @@ local IMG_DIRECTORY = 0
 	version = 0.1, 
 	onFiletreeLDown = 
 		function(self, tree, event, item_id ) 
-			local mask = wx.wxTREE_HITTEST_ONITEMINDENT
-				+ wx.wxTREE_HITTEST_ONITEMICON + wx.wxTREE_HITTEST_ONITEMRIGHT
-			local item_id, flags = tree:HitTest(event:GetPosition())
-			if item_id and bit.band(flags, mask) > 0 then
+			--local mask = wx.wxTREE_HITTEST_ONITEMINDENT
+			--	+ wx.wxTREE_HITTEST_ONITEMICON + wx.wxTREE_HITTEST_ONITEMRIGHT
+			--local item_id, flags = tree:HitTest(event:GetPosition())
+			if item_id then -- and bit.band(flags, mask) > 0 then
 				tree:SelectItem(item_id)
 				tree:SetFocus()
 			else  
-				event:Skip()
+			--	event:Skip()
 			end
 			return false
 		end,
