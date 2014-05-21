@@ -1,15 +1,34 @@
+local defaults =
+{
+	dir = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\natural selection 2\\";
+	runasmod = true;
+	modroot = "output";
+}
+	
+
+function ns2config( key )
+	if ide.config.ns2 and ide.config.ns2[key] ~= nil then
+		return ide.config.ns2[key]
+	end
+	return defaults[key]
+end
+
+
 local interpreter = {
   name = "NS2",
   description = "Natural Selection 2",
   api = {"baselib", "sample"},
   frun = function(self,wfilename,rundebug)
-	local NS2Dir =  "C:\\Program Files (x86)\\Steam\\steamapps\\common\\natural selection 2\\"
-	--local workDir = self:fworkdir(wfilename)
-	local workDir = MergeFullPath(ide:GetProject(), "output")
-	if not wx.wxDirExists( workDir ) then
-		workDir = string.sub( ide:GetProject(), 1, -2 )
+	local ns2dir = ns2config 'dir'
+	local args = ""
+	if ns2config 'runasmod' then
+		local workDir = MergeFullPath(ide:GetProject(), ns2config 'modroot' )
+		if not wx.wxDirExists( workDir ) then
+			workDir = string.sub( ide:GetProject(), 1, -2 )
+		end
+		args = string.format( '-game "' ..workDir.. '"' )
 	end
-    CommandLineRun(	'"'.. NS2Dir .. 'ns2.exe" -game "' ..workDir.. '"', NS2Dir, true, false)
+    CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, ns2dir, true, false)
   end,
   fprojdir = function(self,wfilename)  
     return wfilename:GetPath(wx.wxPATH_GET_VOLUME)
