@@ -482,10 +482,13 @@ end
 
 if app.postinit then app.postinit() end
 
+local accelTbl = {}
 if ide.osname == 'Macintosh' then
-  ide.frame:SetAcceleratorTable(wx.wxAcceleratorTable({
-     wx.wxAcceleratorEntry(wx.wxACCEL_CTRL, ('M'):byte(), ID_VIEWMINIMIZE)
-  }))
+	accelTbl[#accelTbl+1] = wx.wxAcceleratorEntry(wx.wxACCEL_CTRL, ('M'):byte(), ID_VIEWMINIMIZE)
+end
+PackageEventHandle("AccumulateAcceleratorTable",accelTbl)
+if #accelTbl > 0 then
+	ide.frame:SetAcceleratorTable(wx.wxAcceleratorTable(accelTbl))
 end
 
 -- this is a workaround for a conflict between global shortcuts and local
