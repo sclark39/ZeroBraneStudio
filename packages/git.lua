@@ -21,6 +21,7 @@ function P.onAppLoad(...)
 
 	local exes = 
 	{ 
+		gitk = 'C:\\Windows\\System32\\cmd.exe /c start gitk',
 		tgit = '"C:\\Program Files\\TortoiseGit\\bin\\TortoiseGitProc.exe"',
 	}
 
@@ -29,7 +30,7 @@ function P.onAppLoad(...)
 		{ 'ID_GIT_DIFF', 	TR("&Diff"),		'%tgit /command:diff /path:"%fp"' 		},
 		{ 'ID_GIT_REVERT', 	TR("&Revert"),		'%tgit /command:revert /path:"%fp"' 	},
 		{ 'ID_GIT_CLEANUP', TR("&Cleanup"),		'%tgit /command:cleanup /path:"%pr"'	},
-		--{ 'ID_GIT_HISTORY', TR("&History"),		'%gitk "%fp"'						},
+		{ 'ID_GIT_HISTORY', TR("&History"),		'%gitk "%fp"'							},
 		{},
 		{ 'ID_GIT_SWITCH',  TR("Switch"),		'%tgit /command:switch /path:"%pr"'		},
 		{ 'ID_GIT_SHOWLOG', TR("Show &Log"),	'%tgit /command:log /path:"%pr"'		},
