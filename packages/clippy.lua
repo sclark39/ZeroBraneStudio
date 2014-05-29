@@ -1,8 +1,14 @@
 local G = ...
 local id = G.ID("clippy.clippy")
 local menuid
-local stack = {}
+local stack
 local kStackLimit = 10
+
+local function SaveStack(self)
+	local settings = self:GetSettings()
+	settings.stack = stack
+    self:SetSettings( settings ) 	
+end
 
 local function SaveClip()
 	local tdo = wx.wxTextDataObject("None")
@@ -67,6 +73,7 @@ function PasteClip(i)
 			table.insert( stack, 1, newclip )
 			stack[kStackLimit] = nil
 		end
+		
 		ide.frame:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, ID_PASTE))
 		return true
 	end
@@ -75,13 +82,18 @@ end
 
 local function OnRegister(self)
 	local menu = ide:GetMenuBar():GetMenu(ide:GetMenuBar():FindMenu(TR("&Edit")))
-	menuid = menu:Append(id, "Open Clippings"..KSC(id, "Ctrl-Shift-V"))
+	menuid = menu:Append(id, "Open Clip Stack"..KSC(id, "Ctrl-Shift-V"))
 	ide:GetMainFrame():Connect(id, wx.wxEVT_COMMAND_MENU_SELECTED, function (event)
 			OpenClipList(ide:GetEditorWithFocus(ide:GetEditor()))
 		end)
 	ide:GetMainFrame():Connect(id, wx.wxEVT_UPDATE_UI, function (event)
 			event:Check(ide:GetEditorWithFocus(ide:GetEditor()) ~= nil)
 		end)
+	
+	local settings = self:GetSettings()
+	stack = settings.stack or {}
+	settings.stack = stack
+    self:SetSettings(settings)
 end
 
 local function OnUnRegister(self)
@@ -98,6 +110,7 @@ local function OnEditorAction( self, editor, event )
 		ide.frame:ProcessEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
 		self.onEditorAction = OnEditorAction
 		SaveClip()
+		SaveStack(self)
 		return false
 	end
 end
@@ -106,6 +119,7 @@ local function OnEditorUserlistSelection( self, editor, event )
 	if event:GetListType() == 2 then			
 		local i = tonumber( event:GetText():sub(1,1) );
 		PasteClip(i)
+		SaveStack(self)
 		return false
 	end
 end
