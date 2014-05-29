@@ -736,14 +736,13 @@ function CreateEditor()
   editor:SetFoldFlags(tonumber(edcfg.foldflags) or wxstc.wxSTC_FOLDFLAG_LINEAFTER_CONTRACTED)
 
   if ide.wxver >= "2.9.5" then
-    editor:SetExtraAscent(tonumber(edcfg.extraascent) or 0)
-  end
-
-  -- allow multiple selection and multi-cursor editing if supported
-  if ide.wxver >= "2.9.5" then
+    -- allow multiple selection and multi-cursor editing if supported
     editor:SetMultipleSelection(1)
     editor:SetAdditionalCaretsBlink(1)
     editor:SetAdditionalSelectionTyping(1)
+    -- allow extra ascent/descent
+    editor:SetExtraAscent(tonumber(edcfg.extraascent) or 0)
+    editor:SetExtraDescent(tonumber(edcfg.extradescent) or 0)
   end
 
   do
@@ -783,12 +782,14 @@ function CreateEditor()
         else
           redolater = nil
           self:GotoPos(pos)
+          self:EnsureVisibleEnforcePolicy(self:LineFromPosition(pos))
         end
       elseif not badtime and redolater then
         -- reset the left margin first to make sure that the position
         -- is set "from the left" to get the best content displayed.
         self:SetXOffset(0)
         self:GotoPos(redolater)
+        self:EnsureVisibleEnforcePolicy(self:LineFromPosition(redolater))
         redolater = nil
       end
     end
@@ -951,44 +952,44 @@ function CreateEditor()
 
   editor:Connect(wxstc.wxEVT_STC_USERLISTSELECTION,
     function (event)
-		if PackageEventHandle("onUserListSelection", event ) == false then
-        -- this event has already been handled
-		else	
-		  if ide.wxver >= "2.9.5" and editor:GetSelections() > 1 then
-			local text = event:GetText()
-			-- capture all positions as the selection may change
-			local positions = {}
-			for s = 0, editor:GetSelections()-1 do
-			  table.insert(positions, editor:GetSelectionNCaret(s))
-			end
-			-- process all selections from last to first
-			table.sort(positions)
-			local mainpos = editor:GetSelectionNCaret(editor:GetMainSelection())
+      if PackageEventHandle("onEditorUserlistSelection", editor, event) == false then
+        return
+      end
 
-			editor:BeginUndoAction()
-			for s = #positions, 1, -1 do
-			  local pos = positions[s]
-			  local start_pos = editor:WordStartPosition(pos, true)
-			  editor:SetSelection(start_pos, pos)
-			  editor:ReplaceSelection(text)
-			  -- if this is the main position, save new cursor position to restore
-			  if pos == mainpos then mainpos = editor:GetCurrentPos()
-			  elseif pos < mainpos then
-				-- adjust main position as earlier changes may affect it
-				mainpos = mainpos + #text - (pos - start_pos)
-			  end
-			end
-			editor:EndUndoAction()
+      if ide.wxver >= "2.9.5" and editor:GetSelections() > 1 then
+        local text = event:GetText()
+        -- capture all positions as the selection may change
+        local positions = {}
+        for s = 0, editor:GetSelections()-1 do
+          table.insert(positions, editor:GetSelectionNCaret(s))
+        end
+        -- process all selections from last to first
+        table.sort(positions)
+        local mainpos = editor:GetSelectionNCaret(editor:GetMainSelection())
 
-			editor:GotoPos(mainpos)
-		  else
-			local pos = editor:GetCurrentPos()
-			local start_pos = editor:WordStartPosition(pos, true)
-			editor:SetSelection(start_pos, pos)
-			editor:ReplaceSelection(event:GetText())
-		  end
-		end
-	end)
+        editor:BeginUndoAction()
+        for s = #positions, 1, -1 do
+          local pos = positions[s]
+          local start_pos = editor:WordStartPosition(pos, true)
+          editor:SetSelection(start_pos, pos)
+          editor:ReplaceSelection(text)
+          -- if this is the main position, save new cursor position to restore
+          if pos == mainpos then mainpos = editor:GetCurrentPos()
+          elseif pos < mainpos then
+            -- adjust main position as earlier changes may affect it
+            mainpos = mainpos + #text - (pos - start_pos)
+          end
+        end
+        editor:EndUndoAction()
+
+        editor:GotoPos(mainpos)
+      else
+        local pos = editor:GetCurrentPos()
+        local start_pos = editor:WordStartPosition(pos, true)
+        editor:SetSelection(start_pos, pos)
+        editor:ReplaceSelection(event:GetText())
+      end
+    end)
 
   editor:Connect(wxstc.wxEVT_STC_SAVEPOINTREACHED,
     function ()
