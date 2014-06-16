@@ -41,10 +41,6 @@ local function OpenClipList( editor )
 		editor:AutoCompCancel()
 	end
 
-	--if #stack == 0 then
-	--	return
-	--end
-
 	editor:AutoCompSetSeparator(string.byte('\n'))
 	editor:AutoCompSetTypeSeparator(0)
 
@@ -103,11 +99,11 @@ local function OnUnRegister(self)
 end
 
 local function OnEditorAction( self, editor, event )
-	local id = event:GetId()
-	if id == ID_COPY or id == ID_CUT then
+	local eid = event:GetId()
+	if eid == ID_COPY or eid == ID_CUT then
 		-- call the original handler first to process Copy/Cut event
 		self.onEditorAction = nil
-		ide.frame:ProcessEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
+		ide.frame:ProcessEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, eid))
 		self.onEditorAction = OnEditorAction
 		SaveClip()
 		SaveStack(self)
