@@ -77,11 +77,19 @@ local function onEditMenu(event)
 
   local menu_id = event:GetId()
   if menu_id == ID_CUT then
-    if editor:GetSelectionStart() == editor:GetSelectionEnd()
-      then editor:LineCut() else editor:Cut() end
+    if PackageEventHandle("onEditCut", editor) == false then
+        -- this event has already been handled
+	else	
+		if editor:GetSelectionStart() == editor:GetSelectionEnd()
+		  then editor:LineCut() else editor:Cut() end
+	end  
   elseif menu_id == ID_COPY then
-    if editor:GetSelectionStart() == editor:GetSelectionEnd()
-      then editor:LineCopy() else editor:Copy() end
+	if PackageEventHandle("onEditCopy", editor) == false then
+        -- this event has already been handled
+	else		
+		if editor:GetSelectionStart() == editor:GetSelectionEnd()
+		  then editor:LineCopy() else editor:Copy() end
+	end  
   elseif menu_id == ID_PASTE then editor:Paste()
   elseif menu_id == ID_SELECTALL then editor:SelectAll()
   elseif menu_id == ID_UNDO then editor:Undo()
