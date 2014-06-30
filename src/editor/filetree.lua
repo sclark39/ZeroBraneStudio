@@ -437,6 +437,21 @@ local function treeSetConnectorsAndIcons(tree)
       end
       return true
     end)
+
+	tree:Connect(wx.wxEVT_LEFT_DCLICK,
+		function (event)
+		  -- only toggle if this is a folder and the click is on the item line
+		  -- (exclude the label as it's used for renaming and dragging)
+			local item_id, flags = tree:HitTest(event:GetPosition())
+
+			if PackageEventHandle("onFiletreeLDClick", tree, event, item_id) == false then
+				return
+			end
+	
+			event:Skip()
+			return true
+		end)
+
   local parent
   tree:Connect(wx.wxEVT_COMMAND_TREE_BEGIN_LABEL_EDIT,
     function (event)
