@@ -3,6 +3,7 @@ local defaults =
 	dir = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\natural selection 2\\";
 	runasmod = true;
 	modroot = "output";
+    args = "";
 }
 	
 
@@ -26,7 +27,7 @@ local interpreter = {
 		if not wx.wxDirExists( workDir ) then
 			workDir = string.sub( ide:GetProject(), 1, -2 )
 		end
-		args = string.format( '-game "' ..workDir.. '"' )
+		args = string.format( '-game "%s" %s', workDir, ns2config 'args' )
 	end
     CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, ns2dir, true, false)
   end,
