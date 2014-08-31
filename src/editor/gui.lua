@@ -4,6 +4,7 @@
 ---------------------------------------------------------
 
 local ide = ide
+local unpack = table.unpack or unpack
 
 -- Pick some reasonable fixed width fonts to use for the editor
 local function setFont(style, config)
@@ -79,6 +80,13 @@ local function menuDropDownPosition(event)
   return ide.frame:ScreenToClient(tb:ClientToScreen(rect:GetBottomLeft()))
 end
 
+local function tbIconSize()
+  local iconsize = (tonumber(ide.config.toolbar and ide.config.toolbar.iconsize)
+    or (ide.osname == 'Macintosh' and 24 or 16))
+  if iconsize ~= 24 then iconsize = 16 end
+  return iconsize
+end
+
 local function createToolBar(frame)
   local toolBar = wxaui.wxAuiToolBar(frame, wx.wxID_ANY, wx.wxDefaultPosition, wx.wxDefaultSize,
     wxaui.wxAUI_TB_PLAIN_BACKGROUND)
@@ -87,34 +95,28 @@ local function createToolBar(frame)
     wx.wxDefaultPosition, wx.wxSize.new(240, ide.osname == 'Unix' and 28 or 24))
 
   -- there are two sets of icons: use 24 on OSX and 16 on others.
-  local toolBmpSize = (
-    ide.osname == 'Macintosh' and wx.wxSize(24, 24) or wx.wxSize(16, 16))
+  local iconsize = tbIconSize()
+  local toolBmpSize = wx.wxSize(iconsize, iconsize)
   local getBitmap = (ide.app.createbitmap or wx.wxArtProvider.GetBitmap)
-  toolBar:AddTool(ID_NEW, "New", getBitmap(wx.wxART_NORMAL_FILE, wx.wxART_TOOLBAR, toolBmpSize), TR("Create an empty document")..SCinB(ID_NEW))
-  toolBar:AddTool(ID_OPEN, "Open", getBitmap(wx.wxART_FILE_OPEN, wx.wxART_TOOLBAR, toolBmpSize), TR("Open an existing document")..SCinB(ID_OPEN))
-  toolBar:AddTool(ID_SAVE, "Save", getBitmap(wx.wxART_FILE_SAVE, wx.wxART_TOOLBAR, toolBmpSize), TR("Save the current document")..SCinB(ID_SAVE))
-  toolBar:AddTool(ID_SAVEALL, "Save All", getBitmap(wx.wxART_NEW_DIR, wx.wxART_TOOLBAR, toolBmpSize), TR("Save all open documents")..SCinB(ID_SAVEALL))
-  toolBar:AddTool(ID_PROJECTDIRFROMFILE, "Update", getBitmap(wx.wxART_GO_DIR_UP, wx.wxART_TOOLBAR, toolBmpSize), TR("Set project directory from current file")..SCinB(ID_PROJECTDIRFROMFILE))
-  toolBar:AddTool(ID_PROJECTDIRCHOOSE, "Choose", getBitmap("wxART_DIR_SETUP", wx.wxART_TOOLBAR, toolBmpSize), TR("Choose a project directory")..SCinB(ID_PROJECTDIRCHOOSE))
-  toolBar:AddSeparator()
-  toolBar:AddTool(ID_FIND, "Find", getBitmap(wx.wxART_FIND, wx.wxART_TOOLBAR, toolBmpSize), TR("Find text")..SCinB(ID_FIND))
-  toolBar:AddTool(ID_REPLACE, "Replace", getBitmap(wx.wxART_FIND_AND_REPLACE, wx.wxART_TOOLBAR, toolBmpSize), TR("Find and replace text")..SCinB(ID_REPLACE))
-  if ide.app.createbitmap then -- custom handler should handle all bitmaps
-    toolBar:AddSeparator()
-    toolBar:AddTool(ID_STARTDEBUG, "Start Debugging", getBitmap("wxART_DEBUG_START", wx.wxART_TOOLBAR, toolBmpSize), TR("Start or Continue debugging")..SCinB(ID_STARTDEBUG))
-    toolBar:AddTool(ID_STOPDEBUG, "Stop Debugging", getBitmap("wxART_DEBUG_STOP", wx.wxART_TOOLBAR, toolBmpSize), TR("Stop the currently running process")..SCinB(ID_STOPDEBUG))
-    toolBar:AddTool(ID_DETACHDEBUG, "Detach Process", getBitmap("wxART_DEBUG_DETACH", wx.wxART_TOOLBAR, toolBmpSize), TR("Stop debugging and continue running the process")..SCinB(ID_DETACHDEBUG))
-    toolBar:AddTool(ID_BREAK, "Break", getBitmap("wxART_DEBUG_BREAK", wx.wxART_TOOLBAR, toolBmpSize), TR("Break execution at the next executed line of code")..SCinB(ID_BREAK))
-    toolBar:AddTool(ID_STEP, "Step into", getBitmap("wxART_DEBUG_STEP_INTO", wx.wxART_TOOLBAR, toolBmpSize), TR("Step into")..SCinB(ID_STEP))
-    toolBar:AddTool(ID_STEPOVER, "Step over", getBitmap("wxART_DEBUG_STEP_OVER", wx.wxART_TOOLBAR, toolBmpSize), TR("Step over")..SCinB(ID_STEPOVER))
-    toolBar:AddTool(ID_STEPOUT, "Step out", getBitmap("wxART_DEBUG_STEP_OUT", wx.wxART_TOOLBAR, toolBmpSize), TR("Step out of the current function")..SCinB(ID_STEPOUT))
-    toolBar:AddSeparator()
-    toolBar:AddTool(ID_TOGGLEBREAKPOINT, "Toggle breakpoint", getBitmap("wxART_DEBUG_BREAKPOINT_TOGGLE", wx.wxART_TOOLBAR, toolBmpSize), TR("Toggle breakpoint")..SCinB(ID_TOGGLEBREAKPOINT))
-    toolBar:AddTool(ID_BOOKMARKTOGGLE, "Toggle bookmark", getBitmap("wxART_BOOKMARK_TOGGLE", wx.wxART_TOOLBAR, toolBmpSize), TR("Toggle bookmark")..SCinB(ID_BOOKMARKTOGGLE))
-    toolBar:AddTool(ID_VIEWCALLSTACK, "Stack window", getBitmap("wxART_DEBUG_CALLSTACK", wx.wxART_TOOLBAR, toolBmpSize), TR("View the stack window")..SCinB(ID_VIEWCALLSTACK))
-    toolBar:AddTool(ID_VIEWWATCHWINDOW, "Watch window", getBitmap("wxART_DEBUG_WATCH", wx.wxART_TOOLBAR, toolBmpSize), TR("View the watch window")..SCinB(ID_VIEWWATCHWINDOW))
+  local icons, prev = ide.config.toolbar.icons
+  for _, id in ipairs(icons) do
+    if icons[id] ~= false then -- skip explicitly disabled icons
+      if id == ID_SEPARATOR then
+        -- make sure that there are no two separators next to each other;
+        -- this may happen when some of the icons are disabled.
+        if prev ~= ID_SEPARATOR then toolBar:AddSeparator() end
+      else
+        local iconmap = ide.config.toolbar.iconmap[id]
+        if iconmap then
+          local icon, description = unpack(iconmap)
+          local isbitmap = type(icon) == "userdata" and icon:GetClassInfo():GetClassName() == "wxBitmap"
+          local bitmap = isbitmap and icon or getBitmap(icon, "TOOLBAR", toolBmpSize)
+          toolBar:AddTool(id, "", bitmap, TR(description)..SCinB(id))
+        end
+      end
+      prev = id
+    end
   end
-  toolBar:AddSeparator()
   toolBar:AddControl(funclist)
 
   toolBar:SetToolDropDown(ID_OPEN, true)
@@ -471,7 +473,6 @@ do
 
   mgr:AddPane(frame.toolBar, wxaui.wxAuiPaneInfo():
     Name("toolbar"):Caption("Toolbar"):
-    MinSize(300,16):FloatingSize(800,48):
     ToolbarPane():Top():CloseButton(false):PaneBorder(false):
     LeftDockable(false):RightDockable(false))
   mgr:AddPane(frame.notebook, wxaui.wxAuiPaneInfo():

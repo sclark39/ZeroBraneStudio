@@ -42,6 +42,7 @@ ide = {
     editor = {
       foldcompact = true,
       checkeol = true,
+      saveallonrun = false,
     },
     debugger = {
       verbose = false,
@@ -56,8 +57,15 @@ ide = {
       interpreter = 'luadeb',
     },
     outputshell = {},
-    filetree = {},
+    filetree = {
+      mousemove = true,
+    },
     funclist = {},
+
+    toolbar = {
+      icons = {},
+      iconmap = {},
+    },
 
     keymap = {},
     messages = {},
@@ -85,13 +93,14 @@ ide = {
     unhidewindow = false, -- to unhide a gui window
     allowinteractivescript = false, -- allow interaction in the output window
     filehistorylength = 20,
-    projecthistorylength = 15,
+    projecthistorylength = 20,
     savebak = false,
     singleinstance = false,
     singleinstanceport = 0xe493,
     -- HiDPI/Retina display support;
     -- `false` by default because of issues with indicators with alpha setting
     hidpi = false,
+    hotexit = false,
   },
   specs = {
     none = {
@@ -180,7 +189,7 @@ end
 
 dofile "src/version.lua"
 
-for _, file in ipairs({"ids", "style", "keymap", "proto"}) do
+for _, file in ipairs({"ids", "style", "keymap", "proto", "toolbar"}) do
   dofile("src/editor/"..file..".lua")
 end
 
@@ -255,7 +264,9 @@ do
   for index = 2, #arg do
     if (arg[index] == "-cfg" and index+1 <= #arg) then
       table.insert(configs,arg[index+1])
-    elseif arg[index-1] ~= "-cfg" then
+    elseif arg[index-1] ~= "-cfg"
+    -- on OSX command line includes -psn... parameter, don't include these
+    and (ide.osname ~= 'Macintosh' or not arg[index]:find("^-psn")) then
       table.insert(filenames,arg[index])
     end
   end
@@ -303,13 +314,23 @@ local function loadPackages(filter)
   -- check dependencies and assign file names to each package
   local unload = {}
   for fname, package in pairs(ide.packages) do
+    if type(package.dependencies) == 'table'
+    and package.dependencies.osname
+    and not package.dependencies.osname:find(ide.osname, 1, true) then
+      (DisplayOutputLn or print)(
+        ("Package '%s' not loaded: requires %s platform, but you are running %s.")
+          :format(fname, package.dependencies.osname, ide.osname)
+      )
+      table.insert(unload, fname)
+    end
+
     local needsversion = tonumber(package.dependencies)
       or type(package.dependencies) == 'table' and tonumber(package.dependencies[1])
       or -1
     local isversion = tonumber(ide.VERSION)
     if isversion and needsversion > isversion then
       (DisplayOutputLn or print)(
-        ("Package '%s' not loaded: requires version %s, but you are running version %s")
+        ("Package '%s' not loaded: requires version %s, but you are running version %s.")
           :format(fname, needsversion, ide.VERSION)
       )
       table.insert(unload, fname)
@@ -373,8 +394,7 @@ end
 -- process config
 
 -- set ide.config environment
-ide.config.os = os
-ide.config.wxstc = wxstc
+setmetatable(ide.config, {__index = {os = os, wxstc = wxstc, wx = wx}})
 ide.config.load = { interpreters = loadInterpreters, specs = loadSpecs,
   tools = loadTools }
 do
@@ -469,14 +489,14 @@ SettingsRestoreView()
 -- Load the filenames
 
 do
-  for _, fileName in ipairs(filenames) do
-    if fileName ~= "--" then
-      if wx.wxDirExists(fileName) then
-        local dir = wx.wxFileName.DirName(fileName)
+  for _, filename in ipairs(filenames) do
+    if filename ~= "--" then
+      if wx.wxDirExists(filename) then
+        local dir = wx.wxFileName.DirName(filename)
         dir:Normalize() -- turn into absolute path if needed
         ProjectUpdateProjectDir(dir:GetFullPath())
-      else
-        LoadFile(fileName, nil, true)
+      elseif not ActivateFile(filename) then
+        DisplayOutputLn(("Can't open file '%s': %s"):format(filename, wx.wxSysErrorMsg()))
       end
     end
   end
@@ -501,6 +521,17 @@ local remap = {
   [ID_RENAMEFILE]  = ide:GetProjectTree(),
   [ID_DELETEFILE]  = ide:GetProjectTree(),
 }
+
+local function rerouteMenuCommand(obj, id)
+  -- check if the conflicting shortcut is enabled:
+  -- (1) SetEnabled wasn't called or (2) Enabled was set to `true`.
+  local uievent = wx.wxUpdateUIEvent(id)
+  obj:ProcessEvent(uievent)
+  if not uievent:GetSetEnabled() or uievent:GetEnabled() then
+    obj:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
+  end
+end
+
 local function remapkey(event)
   local keycode = event:GetKeyCode()
   local mod = event:GetModifiers()
@@ -508,7 +539,7 @@ local function remapkey(event)
     if obj:FindFocus():GetId() == obj:GetId() then
       local ae = wx.wxAcceleratorEntry(); ae:FromString(KSC(id))
       if ae:GetFlags() == mod and ae:GetKeyCode() == keycode then
-        obj:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, id))
+        rerouteMenuCommand(obj, id)
         return
       end
     end
@@ -534,13 +565,7 @@ local function resolveConflict(localid, globalid)
         end
       end
     end
-    -- check if the conflicting shortcut is enabled:
-    -- (1) SetEnabled wasn't called or (2) Enabled was set to `true`.
-    local uievent = wx.wxUpdateUIEvent(globalid)
-    ide.frame:ProcessEvent(uievent)
-    if not uievent:GetSetEnabled() or uievent:GetEnabled() then
-      ide.frame:AddPendingEvent(wx.wxCommandEvent(wx.wxEVT_COMMAND_MENU_SELECTED, globalid))
-    end
+    rerouteMenuCommand(ide.frame, globalid)
   end
 end
 

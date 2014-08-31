@@ -76,6 +76,19 @@ local function onEditMenu(event)
   end
 
   local menu_id = event:GetId()
+  local copytext
+  if (menu_id == ID_CUT or menu_id == ID_COPY)
+  and ide.wxver >= "2.9.5" and editor:GetSelections() > 1 then
+    local main = editor:GetMainSelection()
+    copytext = editor:GetTextRange(editor:GetSelectionNStart(main), editor:GetSelectionNEnd(main))
+    for s = 0, editor:GetSelections()-1 do
+      if copytext ~= editor:GetTextRange(editor:GetSelectionNStart(s), editor:GetSelectionNEnd(s)) then
+        copytext = nil
+        break
+      end
+    end
+  end
+
   if menu_id == ID_CUT then
     if PackageEventHandle("onEditCut", editor) == false then
         -- this event has already been handled
@@ -95,6 +108,8 @@ local function onEditMenu(event)
   elseif menu_id == ID_UNDO then editor:Undo()
   elseif menu_id == ID_REDO then editor:Redo()
   end
+
+  if copytext then editor:CopyText(#copytext, copytext) end
 end
 
 for _, event in pairs({ID_CUT, ID_COPY, ID_PASTE, ID_SELECTALL, ID_UNDO, ID_REDO}) do
@@ -233,7 +248,8 @@ frame:Connect(ID_COMMENT, wx.wxEVT_COMMAND_MENU_SELECTED,
 
 local function processSelection(editor, func)
   local text = editor:GetSelectedText()
-  local pos = editor:GetCurrentPos()
+  local line = editor:GetCurrentLine()
+  local posinline = editor:GetCurrentPos() - editor:PositionFromLine(line)
   if #text == 0 then
     editor:SelectAll()
     text = editor:GetSelectedText()
@@ -258,7 +274,8 @@ local function processSelection(editor, func)
       editor:ReplaceTarget(newtext)
     end
   end
-  editor:GotoPos(pos)
+  editor:GotoPosEnforcePolicy(math.min(
+      editor:PositionFromLine(line)+posinline, editor:GetLineEndPosition(line)))
 end
 
 frame:Connect(ID_SORT, wx.wxEVT_COMMAND_MENU_SELECTED,
@@ -282,28 +299,36 @@ local function reIndent(editor, buf)
   local tw = ut and editor:GetTabWidth() or editor:GetIndent()
 
   local indents = {}
+  local isstatic = {}
   for line = 1, #buf+1 do
-    local closed, blockend = decindent(text)
-    local opened = incindent(text)
+    local style = bit.band(editor:GetStyleAt(editor:PositionFromLine(line-1)), 31)
+    -- don't reformat multi-line comments or strings
+    isstatic[line] = editor.spec.iscomment[style] or editor.spec.isstring[style]
+    if not isstatic[line] or line == 1 or not isstatic[line-1] then
+      local closed, blockend = decindent(text)
+      local opened = incindent(text)
 
-    -- ignore impact from initial block endings as they are already indented
-    if line == 1 then blockend = 0 end
+      -- ignore impact from initial block endings as they are already indented
+      if line == 1 then blockend = 0 end
 
-    -- this only needs to be done for 2, #buf+1; do it and get out when done
-    if line > 1 then indents[line-1] = indents[line-1] - tw * closed end
-    if line > #buf then break end
+      -- this only needs to be done for 2, #buf+1; do it and get out when done
+      if line > 1 then indents[line-1] = indents[line-1] - tw * closed end
+      if line > #buf then break end
 
-    indent = indent + tw * (opened - blockend)
-    if indent < 0 then indent = 0 end
+      indent = indent + tw * (opened - blockend)
+      if indent < 0 then indent = 0 end
+    end
 
     indents[line] = indent
     text = buf[line]
   end
 
   for line = 1, #buf do
-    buf[line] = buf[line]:gsub("^[ \t]*",
-      not buf[line]:match('%S') and ''
-      or ut and ("\t"):rep(indents[line] / tw) or (" "):rep(indents[line]))
+    if not isstatic[line] then
+      buf[line] = buf[line]:gsub("^[ \t]*",
+        not buf[line]:match('%S') and ''
+        or ut and ("\t"):rep(indents[line] / tw) or (" "):rep(indents[line]))
+    end
   end
 end
 

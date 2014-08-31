@@ -89,9 +89,9 @@ function StylesGetDefault()
 end
 
 local markers = {
-  breakpoint = {0, wxstc.wxSTC_MARK_CIRCLE, wx.wxColour(220, 64, 64), wx.wxColour(220, 64, 64)},
-  bookmark = {1, wxstc.wxSTC_MARK_SHORTARROW, wx.wxBLACK, wx.wxColour(96, 160, 220)},
-  currentline = {2, wxstc.wxSTC_MARK_ARROW, wx.wxBLACK, wx.wxColour(64, 220, 64)},
+  breakpoint = {0, wxstc.wxSTC_MARK_CIRCLE, wx.wxColour(196, 64, 64), wx.wxColour(220, 64, 64)},
+  bookmark = {1, wxstc.wxSTC_MARK_SHORTARROW, wx.wxColour(16, 96, 128), wx.wxColour(96, 160, 220)},
+  currentline = {2, wxstc.wxSTC_MARK_ARROW, wx.wxColour(16, 128, 16), wx.wxColour(64, 220, 64)},
   message = {3, wxstc.wxSTC_MARK_CHARACTER+(' '):byte(), wx.wxBLACK, wx.wxColour(220, 220, 220)},
   output = {4, wxstc.wxSTC_MARK_BACKGROUND, wx.wxBLACK, wx.wxColour(240, 240, 240)},
   prompt = {5, wxstc.wxSTC_MARK_ARROWS, wx.wxBLACK, wx.wxColour(220, 220, 220)},
@@ -316,8 +316,8 @@ function StylesApplyToEditor(styles,editor,font,fontitalic,lexerconvert)
   editor:StyleClearAll()
 
   -- set the default linenumber font size based on the editor font size
-  if styles.linenumber then
-    styles.linenumber.fs = styles.linenumber.fs or ide.config.editor.fontsize - 1
+  if styles.linenumber and not styles.linenumber.fs then
+    styles.linenumber.fs = ide.config.editor.fontsize and (ide.config.editor.fontsize - 1) or nil
   end
 
   for name,style in pairs(styles) do
@@ -381,7 +381,7 @@ function ReApplySpecAndStyles()
   local openDocuments = ide.openDocuments
   for i,doc in pairs(openDocuments) do
     if (doc.editor.spec) then
-      SetupKeywords(doc.editor,nil,doc.editor.spec)
+      doc.editor:SetupKeywords(nil,doc.editor.spec)
     end
   end
 end

@@ -7,6 +7,7 @@ editor.usewrap = true
 editor.calltipdelay = 500
 editor.smartindent = true
 editor.fold = true
+editor.autoreload = true
 
 local G = ... -- this now points to the global environment
 local mac = G.ide.osname == 'Macintosh'
@@ -34,7 +35,6 @@ else
 end
 
 outputshell.usewrap = true
-filehistorylength = 20
 
 hidpi = mac -- support Retina displays by default (OSX)
 

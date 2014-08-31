@@ -4,6 +4,7 @@
 ide.proto.Document = {__index = {
   GetFileName = function(self) return self.fileName end,
   GetFilePath = function(self) return self.filePath end,
+  GetFileExt = function(self) return GetFileExt(self.fileName) end,
   GetModTime = function(self) return self.modTime end,
   GetEditor = function(self) return self.editor end,
   GetTabIndex = function(self) return self.index end,
@@ -28,4 +29,6 @@ ide.proto.Interpreter = {__index = {
 ide.proto.Debugger = {__index = {
   IsRunning = function(self) return self.running end,
   IsConnected = function(self) return self.server end,
+  GetHostName = function(self) return self.hostname end,
+  GetPortNumber = function(self) return self.portnumber end,
 }}

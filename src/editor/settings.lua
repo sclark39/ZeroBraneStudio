@@ -8,7 +8,8 @@ local ide = ide
 -- ----------------------------------------------------------------------------
 -- Initialize the wxConfig for loading/saving the preferences
 
-local settings = wx.wxFileConfig(GetIDEString("settingsapp"),GetIDEString("settingsvendor"))
+local settings = wx.wxFileConfig(GetIDEString("settingsapp"),
+  GetIDEString("settingsvendor"), ide.config.ini or "")
 ide.settings = settings
 
 local function settingsReadSafe(settings,what,default)
@@ -391,7 +392,18 @@ function SettingsRestoreView()
   local layoutcur = uimgr:SavePerspective()
   local layout = settingsReadSafe(settings,"uimgrlayout",layoutcur)
   if (layout ~= layoutcur) then
+    -- save the current toolbar configuration and restore re-apply it
+    -- as it's always correct (to avoid storing minh and minw values)
+    local toolbar = frame.uimgr:GetPane("toolbar")
+    local toolbarlayout = (toolbar:IsOk()
+      -- layout includes bestw that is only as wide as the toolbar size,
+      -- this leaves default background on the right side of the toolbar;
+      -- fix it by explicitly replacing with the screen width
+      and uimgr:SavePaneInfo(toolbar):gsub("(bestw=)[^;]+",
+        function(s) return s..wx.wxSystemSettings.GetMetric(wx.wxSYS_SCREEN_X) end)
+      or nil)
     uimgr:LoadPerspective(layout, false)
+    if toolbarlayout then uimgr:LoadPaneInfo(toolbarlayout, toolbar) end
 
     -- check if debugging panes are not mentioned and float them
     for _, name in pairs({"stackpanel", "watchpanel"}) do
@@ -442,6 +454,24 @@ function SettingsRestoreView()
     end
   end
 
+  -- restore configuration for notebook pages that have been split;
+  -- load saved dock_size values and update current values with saved ones
+  -- where dock_size configuration matches
+  local docksizemask = '(dock_size[^=]+=)(%d+)'
+  for l, m in pairs({
+    nbdocklayout = frame.notebook:GetAuiManager(),
+    nbbtmdocklayout = frame.bottomnotebook:GetAuiManager(),
+  }) do
+    -- ...|dock_size(5,0,0)=20|dock_size(2,1,0)=200|...
+    local prevlayout = settingsReadSafe(settings, l, "")
+    local curlayout = m:SavePerspective()
+    local newlayout = curlayout:gsub('(dock_size[^=]+=)(%d+)', function(t,v)
+        local val = prevlayout:match(EscapeMagic(t)..'(%d+)')
+        return t..(val or v)
+      end)
+    if newlayout ~= curlayour then m:LoadPerspective(newlayout) end
+  end
+
   local editor = GetEditor()
   if editor then editor:SetFocus() end
 
@@ -457,10 +487,12 @@ function SettingsSaveView()
   local frame = ide.frame
   local uimgr = frame.uimgr
   
-  settings:Write("uimgrlayout",uimgr:SavePerspective())
-  settings:Write("nblayout",   saveNotebook(frame.notebook))
-  settings:Write("nbbtmlayout",saveNotebook(frame.bottomnotebook))
-  settings:Write("statusbar",frame:GetStatusBar():IsShown())
+  settings:Write("uimgrlayout", uimgr:SavePerspective())
+  settings:Write("nblayout", saveNotebook(frame.notebook))
+  settings:Write("nbbtmlayout", saveNotebook(frame.bottomnotebook))
+  settings:Write("statusbar", frame:GetStatusBar():IsShown())
+  settings:Write("nbdocklayout", frame.notebook:GetAuiManager():SavePerspective())
+  settings:Write("nbbtmdocklayout", frame.bottomnotebook:GetAuiManager():SavePerspective())
 
   settings:SetPath(path)
 end

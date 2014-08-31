@@ -141,7 +141,7 @@ end
 
 local function navigateToPosition(editor, fromPosition, toPosition, length)
   table.insert(editor.jumpstack, fromPosition)
-  editor:GotoPos(toPosition)
+  editor:GotoPosEnforcePolicy(toPosition)
   if length then
     editor:SetAnchor(toPosition + length)
   end
@@ -150,7 +150,7 @@ end
 local function navigateBack(editor)
   if #editor.jumpstack == 0 then return end
   local pos = table.remove(editor.jumpstack)
-  editor:GotoPos(pos)
+  editor:GotoPosEnforcePolicy(pos)
   return true
 end
 
@@ -664,12 +664,12 @@ function CreateEditor()
   -- populate cache with Ctrl-<letter> combinations for workaround on Linux
   -- http://wxwidgets.10942.n7.nabble.com/Menu-shortcuts-inconsistentcy-issue-td85065.html
   for id, shortcut in pairs(ide.config.keymap) do
-    local key = shortcut:match('^Ctrl[-+](%w)$')
+    local key = shortcut:match('^Ctrl[-+](.)$')
     if key then editor.ctrlcache[key:byte()] = id end
   end
 
   -- populate editor keymap with configured combinations
-  for _, map in ipairs(edcfg.keymap) do
+  for _, map in ipairs(edcfg.keymap or {}) do
     local key, mod, cmd, os = unpack(map)
     if not os or os == ide.osname then
       if cmd then
@@ -721,6 +721,8 @@ function CreateEditor()
 
   editor:SetVisiblePolicy(wxstc.wxSTC_VISIBLE_STRICT, 3)
 
+  editor:SetMarginType(margin.LINENUMBER, wxstc.wxSTC_MARGIN_NUMBER)
+  editor:SetMarginMask(margin.LINENUMBER, 0)
   editor:SetMarginWidth(margin.LINENUMBER,
     editor:TextWidth(wxstc.wxSTC_STYLE_DEFAULT, linenummask))
 
@@ -772,6 +774,11 @@ function CreateEditor()
     editor:AutoCompStops([[ \n\t=-+():.,;*/!"'$%&~'#°^@?´`<>][|}{]])
   end
 
+  function editor:GotoPosEnforcePolicy(pos)
+    self:GotoPos(pos)
+    self:EnsureVisibleEnforcePolicy(self:LineFromPosition(pos))
+  end
+
   -- GotoPos should work by itself, but it doesn't (wx 2.9.5).
   -- This is likely because the editor window hasn't been refreshed yet,
   -- so its LinesOnScreen method returns 0/-1, which skews the calculations.
@@ -788,19 +795,19 @@ function CreateEditor()
           if ide.osname ~= 'Macintosh' then self:GotoPos(pos) end
         else
           redolater = nil
-          self:GotoPos(pos)
-          self:EnsureVisibleEnforcePolicy(self:LineFromPosition(pos))
+          self:GotoPosEnforcePolicy(pos)
         end
       elseif not badtime and redolater then
         -- reset the left margin first to make sure that the position
         -- is set "from the left" to get the best content displayed.
         self:SetXOffset(0)
-        self:GotoPos(redolater)
-        self:EnsureVisibleEnforcePolicy(self:LineFromPosition(redolater))
+        self:GotoPosEnforcePolicy(redolater)
         redolater = nil
       end
     end
   end
+
+  function editor:SetupKeywords(...) return SetupKeywords(self, ...) end
 
   editor.ev = {}
   editor:Connect(wxstc.wxEVT_STC_MARGINCLICK,
@@ -880,18 +887,22 @@ function CreateEditor()
           local indent = editor:GetLineIndentation(line - 1)
           local linedone = editor:GetLine(line - 1)
 
-          -- if the indentation is 0 and the current line is not empty
-          -- then take indentation from the current line (instead of the
-          -- previous one). This may happen when CR is hit at the beginning
-          -- of a line (rather than at the end).
-          if indent == 0 and not linetx:match("^[\010\013]*$") then
+          -- if the indentation is 0 and the current line is not empty,
+          -- but the previous line is empty, then take indentation from the
+          -- current line (instead of the previous one). This may happen when
+          -- CR is hit at the beginning of a line (rather than at the end).
+          if indent == 0 and not linetx:match("^[\010\013]*$")
+          and linedone:match("^[\010\013]*$") then
             indent = editor:GetLineIndentation(line)
           end
 
           local ut = editor:GetUseTabs()
           local tw = ut and editor:GetTabWidth() or editor:GetIndent()
+          local style = bit.band(editor:GetStyleAt(editor:PositionFromLine(line-1)), 31)
 
           if edcfg.smartindent
+          -- don't apply smartindent to multi-line comments or strings
+          and not (editor.spec.iscomment[style] or editor.spec.isstring[style])
           and editor.spec.isdecindent and editor.spec.isincindent then
             local closed, blockend = editor.spec.isdecindent(linedone)
             local opened = editor.spec.isincindent(linedone)
@@ -1027,7 +1038,9 @@ function CreateEditor()
   -- where refresh of R/W and R/O status in the status bar is delayed.
 
   editor:Connect(wxstc.wxEVT_STC_PAINTED,
-    function ()
+    function (event)
+      PackageEventHandle("onEditorPainted", editor, event)
+
       if ide.osname == 'Windows' then
         updateStatusText(editor)
 
@@ -1042,7 +1055,9 @@ function CreateEditor()
     end)
 
   editor:Connect(wxstc.wxEVT_STC_UPDATEUI,
-    function ()
+    function (event)
+      PackageEventHandle("onEditorUpdateUI", editor, event)
+
       if ide.osname ~= 'Windows' then updateStatusText(editor) end
 
       editor:GotoPosDelayed()
@@ -1186,6 +1201,10 @@ function CreateEditor()
         -- if no "jump back" is needed, then do normal processing as this
         -- combination can be mapped to some action
         if not navigateBack(editor) then event:Skip() end
+      elseif (keycode == wx.WXK_DELETE and mod == wx.wxMOD_SHIFT)
+          or (keycode == wx.WXK_INSERT and mod == wx.wxMOD_CONTROL) then
+        ide.frame:AddPendingEvent(wx.wxCommandEvent(
+          wx.wxEVT_COMMAND_MENU_SELECTED, keycode == wx.WXK_INSERT and ID_COPY or ID_CUT))
       elseif ide.osname == "Unix" and ide.wxver >= "2.9.5"
       and mod == wx.wxMOD_CONTROL and editor.ctrlcache[keycode] then
         ide.frame:AddPendingEvent(wx.wxCommandEvent(
@@ -1262,6 +1281,7 @@ function CreateEditor()
         or ("  (%d)"):format(#instances+(instances[0] and 1 or 0))
       local line = instances and instances[0] and editor:LineFromPosition(instances[0]-1)+1
       local def =  line and " ("..TR("on line %d"):format(line)..")" or ""
+      local selections = ide.wxver >= "2.9.5" and editor:GetSelections() or 1
 
       local menu = wx.wxMenu {
         { ID_UNDO, TR("&Undo") },
@@ -1274,6 +1294,7 @@ function CreateEditor()
         { },
         { ID_GOTODEFINITION, TR("Go To Definition")..def },
         { ID_RENAMEALLINSTANCES, TR("Rename All Instances")..occurrences },
+        { ID_REPLACEALLSELECTIONS, TR("Replace All Selections") },
         { },
         { ID_QUICKADDWATCH, TR("Add Watch Expression") },
         { ID_QUICKEVAL, TR("Evaluate In Console") },
@@ -1281,7 +1302,9 @@ function CreateEditor()
       }
 
       menu:Enable(ID_GOTODEFINITION, instances and instances[0])
-      menu:Enable(ID_RENAMEALLINSTANCES, instances and (instances[0] or #instances > 0))
+      menu:Enable(ID_RENAMEALLINSTANCES, instances and (instances[0] or #instances > 0)
+        or editor:GetSelectionStart() ~= editor:GetSelectionEnd())
+      menu:Enable(ID_REPLACEALLSELECTIONS, selections > 1)
       menu:Enable(ID_QUICKADDWATCH, value ~= nil)
       menu:Enable(ID_QUICKEVAL, value ~= nil)
 
@@ -1312,12 +1335,49 @@ function CreateEditor()
   editor:Connect(ID_RENAMEALLINSTANCES, wx.wxEVT_COMMAND_MENU_SELECTED,
     function(event)
       if value and pos then
+        if not (instances and (instances[0] or #instances > 0)) then
+          -- if multiple instances (of a variable) are not detected,
+          -- then simply find all instances of (selected) `value`
+          instances = {}
+          local length, pos = editor:GetLength(), 0
+          while true do
+            editor:SetTargetStart(pos)
+            editor:SetTargetEnd(length)
+            pos = editor:SearchInTarget(value)
+            if pos == -1 then break end
+            table.insert(instances, pos+1)
+            pos = pos + #value
+          end
+        end
         selectAllInstances(instances, value, pos)
       end
     end)
 
+  editor:Connect(ID_REPLACEALLSELECTIONS, wx.wxEVT_COMMAND_MENU_SELECTED,
+    function(event)
+      local main = editor:GetMainSelection()
+      local text = wx.wxGetTextFromUser(
+        TR("Enter replacement text"),
+        TR("Replace All Selections"),
+        editor:GetTextRange(editor:GetSelectionNStart(main), editor:GetSelectionNEnd(main))
+      )
+      if not text or text == "" then return end
+
+      editor:BeginUndoAction()
+      for s = 0, editor:GetSelections()-1 do
+        local selst, selend = editor:GetSelectionNStart(s), editor:GetSelectionNEnd(s)
+        editor:SetTargetStart(selst)
+        editor:SetTargetEnd(selend)
+        editor:ReplaceTarget(text)
+        editor:SetSelectionNStart(s, selst)
+        editor:SetSelectionNEnd(s, selst+#text)
+      end
+      editor:EndUndoAction()
+      editor:SetMainSelection(main)
+    end)
+
   editor:Connect(ID_QUICKADDWATCH, wx.wxEVT_COMMAND_MENU_SELECTED,
-    function(event) DebuggerAddWatch(value) end)
+    function(event) ide:AddWatch(value) end)
 
   editor:Connect(ID_QUICKEVAL, wx.wxEVT_COMMAND_MENU_SELECTED,
     function(event) ShellExecuteCode(value) end)
@@ -1472,5 +1532,6 @@ funclist:Connect(wx.wxEVT_COMMAND_CHOICE_SELECTED,
       editor:GotoLine(l)
       editor:SetFocus()
       editor:SetSTCFocus(true)
+      editor:EnsureVisibleEnforcePolicy(l)
     end
   end)

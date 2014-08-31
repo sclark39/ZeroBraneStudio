@@ -4,10 +4,10 @@
 local funcdef = "([A-Za-z_][A-Za-z0-9_%.%:]*)%s*"
 local funccall = "([A-Za-z_][A-Za-z0-9_]*)%s*"
 local decindent = {
-  ['else'] = true, ['elseif'] = true, ['end'] = true}
+  ['else'] = true, ['elseif'] = true, ['until'] = true, ['end'] = true}
 local incindent = {
   ['else'] = true, ['elseif'] = true, ['for'] = true, ['do'] = true,
-  ['if'] = true, ['repeat'] = true, ['until'] = true, ['while'] = true}
+  ['if'] = true, ['repeat'] = true, ['while'] = true}
 local function isfndef(str)
   local l
   local s,e,cap,par = string.find(str, "function%s+" .. funcdef .. "(%(.-%))")
@@ -43,9 +43,10 @@ return {
     -- this handles three different cases:
     local term = (str:match("^%s*(%w+)%s*$")
       or str:match("^%s*(elseif)[%s%(]")
+      or str:match("^%s*(until)[%s%(]")
       or str:match("^%s*(else)%f[%W]")
     )
-    -- (1) 'end', 'elseif', 'else'
+    -- (1) 'end', 'elseif', 'else', 'until'
     local match = term and decindent[term]
     -- (2) 'end)', 'end}', 'end,', and 'end;'
     if not term then term, match = str:match("^%s*(end)%s*([%)%}]*)%s*[,;]?") end
@@ -57,9 +58,10 @@ return {
     return match and 1 or 0, match and term and 1 or 0
   end,
   isincindent = function(str)
-    str = (str:gsub('%-%-%[=*%[.*%]=*%]',''):gsub('%-%-.*','')
+    str = (str:gsub('%-%-%[=*%[.*%]=*%]','')
       :gsub("'.-\\'","'"):gsub("'.-'","")
       :gsub('".-\\"','"'):gsub('".-"','')
+      :gsub('%-%-.*','') -- strip comments after strings are processed
       :gsub("%b()","()") -- remove all function calls
     )
     local term = str:match("^%s*(%w+)%W*")
@@ -130,16 +132,16 @@ return {
 
       if (not iscomment[s]) then
         local tx = editor:GetLine(line)
-        local leftscope
+        local sstart, send
 
-        for i,v in ipairs(scopestart) do
-          if (tx:match("^%s*"..v)) then
-            leftscope = true
-          end
+        for _, v in ipairs(scopestart) do
+          if (tx:match("^%s*"..v.."%f[^%w]")) then sstart = true end
         end
-        if (leftscope) then
-          break
+        for _, v in ipairs(scopeend) do
+          if (tx:match("%f[%w]"..v.."%s*$")) then send = true end
         end
+        -- if the scope starts, but doesn't end on one line, stop searching
+        if sstart and not send then break end
       end
       line = line -1
     end

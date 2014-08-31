@@ -14,6 +14,7 @@ end
 -- so don't use stock IDs on Linux
 local linux = ide.osname == 'Unix'
 
+ID_SEPARATOR        = NewID()
 -- File menu
 ID_NEW              = linux and NewID() or wx.wxID_NEW
 ID_OPEN             = linux and NewID() or wx.wxID_OPEN
@@ -123,6 +124,7 @@ ID_DELETEWATCH      = NewID()
 -- Editor popup menu items
 ID_GOTODEFINITION   = NewID()
 ID_RENAMEALLINSTANCES = NewID()
+ID_REPLACEALLSELECTIONS = NewID()
 ID_QUICKADDWATCH    = NewID()
 ID_QUICKEVAL        = NewID()
 ID_ADDTOSCRATCHPAD  = NewID()

@@ -16,7 +16,7 @@ local CURRENT_LINE_MARKER_VALUE = 2^CURRENT_LINE_MARKER
 function NewFile(filename)
   filename = filename or ide.config.default.fullname
   local editor = CreateEditor()
-  SetupKeywords(editor, GetFileExt(filename))
+  editor:SetupKeywords(GetFileExt(filename))
   local doc = AddEditor(editor, filename)
   if doc then
     PackageEventHandle("onEditorNew", editor)
@@ -71,7 +71,7 @@ function LoadFile(filePath, editor, file_must_exist, skipselection)
   editor = editor or findUnusedEditor() or CreateEditor()
 
   editor:Freeze()
-  SetupKeywords(editor, GetFileExt(filePath))
+  editor:SetupKeywords(GetFileExt(filePath))
   editor:MarkerDeleteAll(-1)
 
   -- remove BOM from UTF-8 encoded files; store BOM to add back when saving
@@ -109,13 +109,16 @@ function LoadFile(filePath, editor, file_must_exist, skipselection)
   editor:Colourise(0, -1)
   editor:Thaw()
 
+  local edcfg = ide.config.editor
   if current then editor:GotoPos(current) end
-  if (file_text and ide.config.editor.autotabs) then
-    local found = string.find(file_text,"\t") ~= nil
-    editor:SetUseTabs(found)
+  if (file_text and edcfg.autotabs) then
+    -- use tabs if they are already used
+    -- or if "usetabs" is set and no space indentation is used in a file
+    editor:SetUseTabs(string.find(file_text, "\t") ~= nil
+      or edcfg.usetabs and (file_text:find("%f[^\r\n] ") or file_text:find("^ ")) == nil)
   end
   
-  if (file_text and ide.config.editor.checkeol) then
+  if (file_text and edcfg.checkeol) then
     -- Auto-detect CRLF/LF line-endings
     local foundcrlf = string.find(file_text,"\r\n") ~= nil
     local foundlf = (string.find(file_text,"[^\r]\n") ~= nil)
@@ -193,6 +196,21 @@ function ReLoadFile(filePath, editor, ...)
   end
 
   return editor
+end
+
+function ActivateFile(filename)
+  local name, suffix, value = filename:match('(.+):([lLpP]?)(%d+)$')
+  if name and not wx.wxFileExists(filename) and wx.wxFileExists(name) then
+    filename = name
+  end
+
+  local opened = LoadFile(filename, nil, true)
+  if opened and value then
+    if suffix:upper() == 'P' then opened:GotoPosDelayed(tonumber(value))
+    else opened:GotoPosDelayed(opened:PositionFromLine(value-1))
+    end
+  end
+  return opened
 end
 
 local function getExtsString()
@@ -323,7 +341,7 @@ function SaveFileAs(editor)
       if ext ~= GetFileExt(filePath) then
         -- new extension, so setup new keywords and re-apply indicators
         editor:ClearDocumentStyle() -- remove styles from the document
-        SetupKeywords(editor, GetFileExt(filePath))
+        editor:SetupKeywords(GetFileExt(filePath))
         IndicateAll(editor)
         MarkupStyle(editor)
       end
@@ -561,14 +579,19 @@ function StripShebang(code) return (code:gsub("^#!.-\n", "\n")) end
 
 local compileOk, compileTotal = 0, 0
 function CompileProgram(editor, params)
-  local params = { jumponerror = (params or {}).jumponerror ~= false,
-    reportstats = (params or {}).reportstats ~= false }
-  local id = editor:GetId()
-  local filePath = DebuggerMakeFileName(editor, openDocuments[id].filePath)
+  local params = {
+    jumponerror = (params or {}).jumponerror ~= false,
+    reportstats = (params or {}).reportstats ~= false,
+    keepoutput = (params or {}).keepoutput,
+  }
+  local doc = ide:GetDocument(editor)
+  local filePath = doc:GetFilePath() or doc:GetFileName()
   local func, err = loadstring(StripShebang(editor:GetText()), '@'..filePath)
   local line = not func and tonumber(err:match(":(%d+)%s*:")) or nil
 
-  if ide.frame.menuBar:IsChecked(ID_CLEAROUTPUT) then ClearOutput() end
+  if not params.keepoutput and ide.frame.menuBar:IsChecked(ID_CLEAROUTPUT) then
+    ClearOutput()
+  end
 
   compileTotal = compileTotal + 1
   if func then
@@ -710,7 +733,9 @@ function SetOpenTabs(params)
     DisplayOutputLn(TR("Can't process auto-recovery record; invalid format: %s."):format(nametab))
     return
   end
-  DisplayOutputLn(TR("Found auto-recovery record and restored saved session."))
+  if not params.quiet then
+    DisplayOutputLn(TR("Found auto-recovery record and restored saved session."))
+  end
   for _,doc in ipairs(nametab) do
     -- check for missing file is no content is stored
     if doc.filepath and not doc.content and not wx.wxFileExists(doc.filepath) then
@@ -758,18 +783,34 @@ function SetAutoRecoveryMark()
   ide.session.lastupdated = os.time()
 end
 
-local function saveAutoRecovery(event)
+local function generateRecoveryRecord(opentabs)
+  return require('mobdebug').line(opentabs, {comment = false})
+end
+
+local function saveHotExit()
+  local opentabs, params = getOpenTabs()
+  if #opentabs > 0 then
+    params.recovery = generateRecoveryRecord(opentabs)
+    params.quiet = true
+    SettingsSaveFileSession({}, params)
+  end
+end
+
+local function saveAutoRecovery(force)
+  if not ide.config.autorecoverinactivity then return end
+
   local lastupdated = ide.session.lastupdated
-  if not ide.config.autorecoverinactivity or not lastupdated then return end
-  if lastupdated < (ide.session.lastsaved or 0) then return end
+  if not force then
+    if not lastupdated or lastupdated < (ide.session.lastsaved or 0) then return end
+  end
 
   local now = os.time()
-  if lastupdated + ide.config.autorecoverinactivity > now then return end
+  if not force and lastupdated + ide.config.autorecoverinactivity > now then return end
 
   -- find all open modified files and save them
   local opentabs, params = getOpenTabs()
   if #opentabs > 0 then
-    params.recovery = require('mobdebug').line(opentabs, {comment = false})
+    params.recovery = generateRecoveryRecord(opentabs)
     SettingsSaveAll()
     SettingsSaveFileSession({}, params)
     ide.settings:Flush()
@@ -864,7 +905,7 @@ local function closeWindow(event)
 
   ide.exitingProgram = true -- don't handle focus events
 
-  if not SaveOnExit(event:CanVeto()) then
+  if not ide.config.hotexit and not SaveOnExit(event:CanVeto()) then
     event:Veto()
     ide.exitingProgram = false
     return
@@ -881,6 +922,7 @@ local function closeWindow(event)
   DebuggerShutdown()
 
   SettingsSaveAll()
+  if ide.config.hotexit then saveHotExit() end
   ide.settings:Flush()
 
   do -- hide all floating panes first
@@ -900,7 +942,7 @@ local function closeWindow(event)
 end
 frame:Connect(wx.wxEVT_CLOSE_WINDOW, closeWindow)
 
-frame:Connect(wx.wxEVT_TIMER, saveAutoRecovery)
+frame:Connect(wx.wxEVT_TIMER, function() saveAutoRecovery() end)
 
 -- in the presence of wxAuiToolbar, when (1) the app gets focus,
 -- (2) a floating panel is closed or (3) a toolbar dropdown is closed,
@@ -964,6 +1006,9 @@ ide.editorApp:Connect(wx.wxEVT_ACTIVATE_APP,
         -- while the application was out of focus
         pcall(function() infocus:SetFocus() end)
       end
+
+      -- save auto-recovery record when making the app inactive
+      if not event:GetActive() then saveAutoRecovery(true) end
 
       local event = event:GetActive() and "onAppFocusSet" or "onAppFocusLost"
       PackageEventHandle(event, ide.editorApp)
