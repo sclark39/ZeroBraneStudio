@@ -7,10 +7,9 @@ local IMG_DIRECTORY = 0
 	author = "sclark39",
 	version = 0.1, 
 	onFiletreeLDown = 
-		function(self, tree, event, item_id ) 
+		function(self, tree, event, item_id )
 			local selectmask =
 				wx.wxTREE_HITTEST_ONITEMRIGHT +
-				wx.wxTREE_HITTEST_ONITEMLABEL +
 				wx.wxTREE_HITTEST_ONITEMINDENT
 			
 			local expanddirmask = 
