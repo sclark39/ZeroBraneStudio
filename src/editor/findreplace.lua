@@ -43,12 +43,10 @@ ide.findReplace = {
 }
 local findReplace = ide.findReplace
 
-local lastEditor
+local NOTFOUND = -1
+
 function findReplace:GetEditor()
-  lastEditor = findReplace.oveditor or GetEditorWithFocus() or lastEditor
-  -- last editor may already be "userdata" instead of a Scintilla object,
-  -- so check if this is still a valid wxSTC object
-  return pcall(function() lastEditor:GetId() end) and lastEditor or GetEditor()
+  return findReplace.oveditor or ide:GetEditorWithLastFocus() or GetEditor()
 end
 
 -------------------- Find replace dialog
@@ -120,7 +118,7 @@ local function shake(window, shakes, duration, vigour)
   local delay = math.floor(duration/shakes/2)
   local position = window:GetPosition() -- get current position
   local deltax = window:GetSize():GetWidth()*vigour
-  for s = 1, shakes do
+  for _ = 1, shakes do
     window:Move(position:GetX()-deltax, position:GetY())
     wx.wxMilliSleep(delay)
     window:Move(position:GetX()+deltax, position:GetY())
@@ -130,18 +128,18 @@ local function shake(window, shakes, duration, vigour)
 end
 
 function findReplace:FindString(reverse)
-  if findReplace:HasText() then
-    local editor = findReplace:GetEditor()
+  local editor = findReplace:GetEditor()
+  if editor and findReplace:HasText() then
     local fDown = iff(reverse, not findReplace.fDown, findReplace.fDown)
     setSearchFlags(editor)
     setTarget(editor, fDown)
     local posFind = editor:SearchInTarget(findReplace.findText)
-    if (posFind == -1) and findReplace.fWrap then
+    if (posFind == NOTFOUND) and findReplace.fWrap then
       editor:SetTargetStart(iff(fDown, 0, editor:GetLength()))
       editor:SetTargetEnd(iff(fDown, editor:GetLength(), 0))
       posFind = editor:SearchInTarget(findReplace.findText)
     end
-    if posFind == -1 then
+    if posFind == NOTFOUND then
       findReplace.foundString = false
       ide.frame:SetStatusText(TR("Text not found."))
       shake(findReplace.dialog)
@@ -163,15 +161,15 @@ end
 
 function findReplace:FindStringAll(inFileRegister)
   local found = false
-  if findReplace:HasText() then
+  local editor = findReplace:GetEditor()
+  if editor and findReplace:HasText() then
     local findLen = string.len(findReplace.findText)
-    local editor = findReplace:GetEditor()
     local e = setTargetAll(editor)
 
     setSearchFlags(editor)
     local posFind = editor:SearchInTarget(findReplace.findText)
-    if (posFind ~= -1) then
-      while posFind ~= -1 do
+    if (posFind ~= NOTFOUND) then
+      while posFind ~= NOTFOUND do
         inFileRegister(posFind)
         editor:SetTargetStart(posFind + findLen)
         editor:SetTargetEnd(e)
@@ -191,9 +189,8 @@ end
 
 function findReplace:ReplaceString(fReplaceAll, inFileRegister)
   local replaced = false
-
-  if findReplace:HasText() then
-    local editor = findReplace:GetEditor()
+  local editor = findReplace:GetEditor()
+  if editor and findReplace:HasText() then
     -- don't replace in read-only editors
     if editor:GetReadOnly() then return false end
 
@@ -204,9 +201,9 @@ function findReplace:ReplaceString(fReplaceAll, inFileRegister)
       setSearchFlags(editor)
       local occurrences = 0
       local posFind = editor:SearchInTarget(findReplace.findText)
-      if (posFind ~= -1) then
+      if (posFind ~= NOTFOUND) then
         if (not inFileRegister) then editor:BeginUndoAction() end
-        while posFind ~= -1 do
+        while posFind ~= NOTFOUND do
           if (inFileRegister) then inFileRegister(posFind) end
 
           local length = editor:GetLength()
@@ -229,16 +226,14 @@ function findReplace:ReplaceString(fReplaceAll, inFileRegister)
       ide.frame:SetStatusText(("%s %s."):format(
         TR("Replaced"), TR("%d instance", occurrences):format(occurrences)))
     else
+      editor:TargetFromSelection()
       -- check if there is anything selected as well as the user can
       -- move the cursor after successful search
       if findReplace.foundString
-      and editor:GetSelectionStart() ~= editor:GetSelectionEnd() then
+      and editor:GetSelectionStart() ~= editor:GetSelectionEnd()
+      -- check that the current selection matches what's being searched for
+      and editor:SearchInTarget(findReplace.findText) ~= NOTFOUND then
         local start = editor:GetSelectionStart()
-
-        -- convert selection to target as we need TargetRE support
-        editor:TargetFromSelection()
-
-        local length = editor:GetLength()
         local replaced = findReplace.fRegularExpr
           and editor:ReplaceTargetRE(findReplace.replaceText)
           or editor:ReplaceTarget(findReplace.replaceText)
@@ -335,9 +330,9 @@ end
 
 local function getExts()
   local knownexts = {}
-  for i,spec in pairs(ide.specs) do
+  for _, spec in pairs(ide.specs) do
     if (spec.exts) then
-      for n,ext in ipairs(spec.exts) do
+      for _, ext in ipairs(spec.exts) do
         table.insert(knownexts, "*."..ext)
       end
     end

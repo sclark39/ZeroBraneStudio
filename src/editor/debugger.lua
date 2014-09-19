@@ -30,9 +30,9 @@ do
   local getBitmap = (ide.app.createbitmap or wx.wxArtProvider.GetBitmap)
   local size = wx.wxSize(16,16)
   local imglist = wx.wxImageList(16,16)
-  imglist:Add(getBitmap("GO-FORWARD", "OTHER", size)) -- 0 = stack call
-  imglist:Add(getBitmap("LIST-VIEW", "OTHER", size)) -- 1 = local variables
-  imglist:Add(getBitmap("REPORT-VIEW", "OTHER", size)) -- 2 = upvalues
+  imglist:Add(getBitmap("VALUE-CALL", "OTHER", size)) -- 0 = stack call
+  imglist:Add(getBitmap("VALUE-LOCAL", "OTHER", size)) -- 1 = local variables
+  imglist:Add(getBitmap("VALUE-UP", "OTHER", size)) -- 2 = upvalues
   debugger.imglist = imglist
 end
 
@@ -109,11 +109,11 @@ local function updateWatchesSync(onlyitem)
 
         if onlyitem or val ~= newval then
           local newchildren = watchCtrl:GetItemChildren(item)
-          if #curchildren > 0 and #newchildren == 0 then
+          if next(curchildren) ~= nil and next(newchildren) == nil then
             watchCtrl:SetItemHasChildren(item, true)
             watchCtrl:CollapseAndReset(item)
             watchCtrl:SetItemHasChildren(item, false)
-          elseif #curchildren > 0 and #newchildren > 0 then
+          elseif next(curchildren) ~= nil and next(newchildren) ~= nil then
             watchCtrl:CollapseAndReset(item)
             watchCtrl:Expand(item)
           end
@@ -251,7 +251,7 @@ local function debuggerToggleViews(show)
 end
 
 local function killClient()
-  if (debugger.pid) then
+  if (debugger.pid and wx.wxProcess.Exists(debugger.pid)) then
     -- using SIGTERM for some reason kills not only the debugee process,
     -- but also some system processes, which leads to a blue screen crash
     -- (at least on Windows Vista SP2)
@@ -262,8 +262,8 @@ local function killClient()
       DisplayOutputLn(TR("Unable to stop program (pid: %d), code %d.")
         :format(debugger.pid, ret))
     end
-    debugger.pid = nil
   end
+  debugger.pid = nil
 end
 
 local function activateDocument(file, line, activatehow)
@@ -314,6 +314,7 @@ local function activateDocument(file, line, activatehow)
         end
         local line = line - 1 -- editor line operations are zero-based
         editor:MarkerAdd(line, CURRENT_LINE_MARKER)
+        editor:Refresh() -- needed for background markers that don't get refreshed (wx2.9.5)
 
         -- found and marked what we are looking for;
         -- don't need to activate with CHECKONLY (this assumes line is given)
@@ -526,8 +527,11 @@ debugger.listen = function(start)
   end
   DisplayOutputLn(TR("Debugger server started at %s:%d.")
     :format(debugger.hostname, debugger.portnumber))
+
   copas.autoclose = false
   copas.addserver(server, function (skt)
+      -- pull any pending data not processed yet
+      if debugger.running then debugger.update() end
       if debugger.server then
         DisplayOutputLn(TR("Refused a request to start a new debugging session as there is one in progress already."))
         return
