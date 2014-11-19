@@ -329,15 +329,8 @@ function findReplace:RunInFiles(replace)
 end
 
 local function getExts()
-  local knownexts = {}
-  for _, spec in pairs(ide.specs) do
-    if (spec.exts) then
-      for _, ext in ipairs(spec.exts) do
-        table.insert(knownexts, "*."..ext)
-      end
-    end
-  end
-  return #knownexts > 0 and table.concat(knownexts, "; ") or nil
+  local knownexts = ide:GetKnownExtensions()
+  return #knownexts > 0 and "*."..table.concat(knownexts, "; *.") or nil
 end
 
 function findReplace:createDialog(replace,infiles)
@@ -397,10 +390,12 @@ function findReplace:createDialog(replace,infiles)
 
     local fname = GetEditorFileAndCurInfo(true)
     if #(findReplace.filedirText) == 0 then
-      findReplace.filedirText = ide.config.path.projectdir
+      findReplace.filedirText = ide:GetProject()
         or fname and fname:GetPath(wx.wxPATH_GET_VOLUME)
         or ""
     end
+
+    PrependStringToArray(ide.findReplace.filedirTextArray, ide:GetProject())
 
     infilesDirStat = wx.wxStaticText(findDialog, wx.wxID_ANY, TR("Directory")..": ")
     infilesDirCombo = wx.wxComboBox(findDialog, wx.wxID_ANY, findReplace.filedirText,
@@ -537,6 +532,8 @@ function findReplace:createDialog(replace,infiles)
   -- https://groups.google.com/d/msg/wx-users/EVJr8GqyNUA/CUALp585E78J
   if (mac and ide.wxver >= "2.9.5") then
     local function simulateEnter()
+      -- the button may be disabled, so check its state first
+      if not findButton:IsEnabled() then return end
       findDialog:AddPendingEvent(wx.wxCommandEvent(
         wx.wxEVT_COMMAND_BUTTON_CLICKED, ID_FIND_NEXT))
     end

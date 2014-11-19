@@ -23,19 +23,9 @@ debugger.hostname = ide.config.debugger.hostname or (function()
   local hostname = socket.dns.gethostname()
   return hostname and socket.dns.toip(hostname) and hostname or "localhost"
 end)()
+debugger.imglist = ide:CreateImageList("STACK", "VALUE-CALL", "VALUE-LOCAL", "VALUE-UP")
 
 local image = { STACK = 0, LOCAL = 1, UPVALUE = 2 }
-
-do
-  local getBitmap = (ide.app.createbitmap or wx.wxArtProvider.GetBitmap)
-  local size = wx.wxSize(16,16)
-  local imglist = wx.wxImageList(16,16)
-  imglist:Add(getBitmap("VALUE-CALL", "OTHER", size)) -- 0 = stack call
-  imglist:Add(getBitmap("VALUE-LOCAL", "OTHER", size)) -- 1 = local variables
-  imglist:Add(getBitmap("VALUE-UP", "OTHER", size)) -- 2 = upvalues
-  debugger.imglist = imglist
-end
-
 local notebook = ide.frame.notebook
 
 local CURRENT_LINE_MARKER = StylesGetMarker("currentline")
@@ -96,7 +86,7 @@ local function updateWatchesSync(onlyitem)
           watchCtrl:SetItemValueIfExpandable(item, nil)
         else
           if #values == 0 then values = {'nil'} end
-          local ok, res = LoadSafe("return "..values[1])
+          local _, res = LoadSafe("return "..values[1])
           watchCtrl:SetItemValueIfExpandable(item, res)
         end
 
@@ -724,7 +714,7 @@ end
 local function nameOutputTab(name)
   local nbk = ide.frame.bottomnotebook
   local index = nbk:GetPageIndex(ide:GetOutput())
-  if index then nbk:SetPageText(index, name) end
+  if index ~= -1 then nbk:SetPageText(index, name) end
 end
 
 debugger.handle = function(command, server, options)
@@ -942,14 +932,6 @@ debugger.quickeval = function(var, callback)
   end
 end
 
-function DebuggerAddStackWindow()
-  return ide:AddPanel(debugger.stackCtrl, "stackpanel", TR("Stack"))
-end
-
-function DebuggerAddWatchWindow()
-  return ide:AddPanel(debugger.watchCtrl, "watchpanel", TR("Watch"))
-end
-
 local width, height = 360, 200
 
 local keyword = {}
@@ -969,7 +951,8 @@ end
 local function debuggerCreateStackWindow()
   local stackCtrl = wx.wxTreeCtrl(ide.frame, wx.wxID_ANY,
     wx.wxDefaultPosition, wx.wxSize(width, height),
-    wx.wxTR_LINES_AT_ROOT + wx.wxTR_HAS_BUTTONS + wx.wxTR_SINGLE + wx.wxTR_HIDE_ROOT)
+    wx.wxTR_LINES_AT_ROOT + wx.wxTR_HAS_BUTTONS + wx.wxTR_SINGLE
+    + wx.wxTR_HIDE_ROOT + wx.wxNO_BORDER)
 
   debugger.stackCtrl = stackCtrl
 
@@ -1033,17 +1016,17 @@ local function debuggerCreateStackWindow()
 
   local layout = ide:GetSetting("/view", "uimgrlayout")
   if layout and not layout:find("stackpanel") then
-    ide.frame.bottomnotebook:AddPage(stackCtrl, TR("Stack"), true)
-    return
+    ide:AddPanelDocked(ide.frame.bottomnotebook, stackCtrl, "stackpanel", TR("Stack"))
+  else
+    ide:AddPanel(stackCtrl, "stackpanel", TR("Stack"))
   end
-  DebuggerAddStackWindow()
 end
 
 local function debuggerCreateWatchWindow()
   local watchCtrl = wx.wxTreeCtrl(ide.frame, wx.wxID_ANY,
     wx.wxDefaultPosition, wx.wxSize(width, height),
     wx.wxTR_LINES_AT_ROOT + wx.wxTR_HAS_BUTTONS + wx.wxTR_SINGLE
-    + wx.wxTR_HIDE_ROOT + wx.wxTR_EDIT_LABELS)
+    + wx.wxTR_HIDE_ROOT + wx.wxTR_EDIT_LABELS + wx.wxNO_BORDER)
 
   debugger.watchCtrl = watchCtrl
 
@@ -1233,10 +1216,10 @@ local function debuggerCreateWatchWindow()
 
   local layout = ide:GetSetting("/view", "uimgrlayout")
   if layout and not layout:find("watchpanel") then
-    ide.frame.bottomnotebook:AddPage(watchCtrl, TR("Watch"), true)
-    return
+    ide:AddPanelDocked(ide.frame.bottomnotebook, watchCtrl, "watchpanel", TR("Watch"))
+  else
+    ide:AddPanel(watchCtrl, "watchpanel", TR("Watch"))
   end
-  DebuggerAddWatchWindow()
 end
 
 debuggerCreateStackWindow()
@@ -1268,6 +1251,7 @@ function DebuggerStop(resetpid)
     debuggerToggleViews(false)
     local lines = TR("traced %d instruction", debugger.stats.line):format(debugger.stats.line)
     DisplayOutputLn(TR("Debugging session completed (%s)."):format(lines))
+    nameOutputTab(debugger.pid and TR("Output (running)") or TR("Output"))
   else
     -- it's possible that the application couldn't start, or that the
     -- debugger in the application didn't start, which means there is

@@ -5,7 +5,6 @@
 
 local ide = ide
 local frame = ide.frame
-local notebook = frame.notebook
 local bottomnotebook = frame.bottomnotebook
 local errorlog = bottomnotebook.errorlog
 
@@ -145,11 +144,30 @@ end
 
 local function nameTab(tab, name)
   local index = bottomnotebook:GetPageIndex(tab)
-  if index then bottomnotebook:SetPageText(index, name) end
+  if index ~= -1 then bottomnotebook:SetPageText(index, name) end
+end
+
+function OutputSetCallbacks(pid, proc, callback, endcallback)
+  local streamin = proc and proc:GetInputStream()
+  local streamerr = proc and proc:GetErrorStream()
+  if streamin then
+    streamins[pid] = {stream=streamin, callback=callback,
+      proc=proc, check=proc and proc.IsInputAvailable}
+  end
+  if streamerr then
+    streamerrs[pid] = {stream=streamerr, callback=callback,
+      proc=proc, check=proc and proc.IsErrorAvailable}
+  end
+  customprocs[pid] = {proc=proc, endcallback=endcallback}
 end
 
 function CommandLineRun(cmd,wdir,tooutput,nohide,stringcallback,uid,endcallback)
   if (not cmd) then return end
+
+  -- expand ~ at the beginning of the command
+  if ide.oshome and cmd:find('~') then
+    cmd = cmd:gsub([[^(['"]?)~]], '%1'..ide.oshome:gsub('[\\/]$',''), 1)
+  end
 
   -- try to extract the name of the executable from the command
   -- the executable may not have the extension and may be in quotes
@@ -182,9 +200,7 @@ function CommandLineRun(cmd,wdir,tooutput,nohide,stringcallback,uid,endcallback)
   local params = wx.wxEXEC_ASYNC + wx.wxEXEC_MAKE_GROUP_LEADER + (nohide and wx.wxEXEC_NOHIDE or 0)
   local pid = wx.wxExecute(cmd, params, proc)
 
-  if (oldcwd) then
-    wx.wxFileName.SetCwd(oldcwd)
-  end
+  if oldcwd then wx.wxFileName.SetCwd(oldcwd) end
 
   -- For asynchronous execution, the return value is the process id and
   -- zero value indicates that the command could not be executed.
@@ -197,20 +213,13 @@ function CommandLineRun(cmd,wdir,tooutput,nohide,stringcallback,uid,endcallback)
 
   DisplayOutputLn(TR("Program '%s' started in '%s' (pid: %d).")
     :format(uid, (wdir and wdir or wx.wxFileName.GetCwd()), pid))
-  customprocs[pid] = {proc=proc, uid=uid, endcallback=endcallback, started = TimeGet()}
 
-  local streamin = proc and proc:GetInputStream()
-  local streamerr = proc and proc:GetErrorStream()
+  OutputSetCallbacks(pid, proc, stringcallback, endcallback)
+  customprocs[pid].uid=uid
+  customprocs[pid].started = TimeGet()
+
   local streamout = proc and proc:GetOutputStream()
-  if (streamin) then
-    streamins[pid] = {stream=streamin, callback=stringcallback}
-  end
-  if (streamerr) then
-    streamerrs[pid] = {stream=streamerr, callback=stringcallback}
-  end
-  if (streamout) then
-    streamouts[pid] = {stream=streamout, callback=stringcallback, out=true}
-  end
+  if streamout then streamouts[pid] = {stream=streamout, callback=stringcallback, out=true} end
 
   unHideWindow(pid)
   nameTab(errorlog, TR("Output (running)"))
@@ -241,15 +250,19 @@ local function getStreams()
     for _,v in pairs(tab) do
       -- periodically stop reading to get a chance to process other events
       local processed = 0
-      while (v.stream:CanRead() and processed <= maxread) do
+      while (v.check(v.proc) and processed <= maxread) do
         local str = v.stream:Read(readonce)
+        -- the buffer has readonce bytes, so cut it to the actual size
+        str = str:sub(1, v.stream:LastRead())
         processed = processed + #str
 
         local pfn
         if (v.callback) then
           str,pfn = v.callback(str)
         end
-        if (v.toshell) then
+        if not str then
+          -- skip if nothing to display
+        elseif (v.toshell) then
           DisplayShell(str)
         else
           DisplayOutputNoMarker(str)
@@ -288,6 +301,15 @@ errorlog:Connect(wx.wxEVT_END_PROCESS, function(event)
     local pid = event:GetPid()
     if (pid ~= -1) then
       getStreams()
+      streamins[pid] = nil
+      streamerrs[pid] = nil
+      streamouts[pid] = nil
+
+      if not customprocs[pid] then return end
+      if customprocs[pid].endcallback then customprocs[pid].endcallback() end
+      -- if this wasn't started with CommandLineRun, skip the rest
+      if not customprocs[pid].uid then return end
+
       -- delete markers and set focus to the editor if there is an input marker
       if errorlog:MarkerPrevious(errorlog:GetLineCount(), PROMPT_MARKER_VALUE) > -1 then
         errorlog:MarkerDeleteAll(PROMPT_MARKER)
@@ -296,19 +318,12 @@ errorlog:Connect(wx.wxEVT_END_PROCESS, function(event)
         if editor then editor:SetFocus() end
       end
       nameTab(errorlog, TR("Output"))
-      local runtime = TimeGet() - customprocs[pid].started
 
-      streamins[pid] = nil
-      streamerrs[pid] = nil
-      streamouts[pid] = nil
-      if (customprocs[pid].endcallback) then
-        customprocs[pid].endcallback()
-      end
-      customprocs[pid] = nil
       unHideWindow(0)
       DebuggerStop(true)
       DisplayOutputLn(TR("Program completed in %.2f seconds (pid: %d).")
-        :format(runtime, pid))
+        :format(TimeGet() - customprocs[pid].started, pid))
+      customprocs[pid] = nil
     end
   end)
 

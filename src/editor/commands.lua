@@ -107,6 +107,7 @@ function LoadFile(filePath, editor, file_must_exist, skipselection)
   end
 
   editor:Colourise(0, -1)
+  editor:ResetTokenList() -- reset list of tokens if this is a reused editor
   editor:Thaw()
 
   local edcfg = ide.config.editor
@@ -214,18 +215,10 @@ function ActivateFile(filename)
 end
 
 local function getExtsString()
-  local knownexts = ""
-  for _,spec in pairs(ide.specs) do
-    if (spec.exts) then
-      for _,ext in ipairs(spec.exts) do
-        knownexts = knownexts.."*."..ext..";"
-      end
-    end
-  end
-  knownexts = knownexts:len() > 0 and knownexts:sub(1,-2) or nil
-
-  local exts = knownexts and TR("Known Files").." ("..knownexts..")|"..knownexts.."|" or ""
-  return exts..TR("All files").." (*)|*"
+  local exts = ide:GetKnownExtensions()
+  local knownexts = #exts > 0 and "*."..table.concat(exts, ";*.") or nil
+  return (knownexts and TR("Known Files").." ("..knownexts..")|"..knownexts.."|" or "")
+  .. TR("All files").." (*)|*"
 end
 
 function ReportError(msg)
@@ -343,6 +336,7 @@ function SaveFileAs(editor)
         editor:ClearDocumentStyle() -- remove styles from the document
         editor:SetupKeywords(GetFileExt(filePath))
         IndicateAll(editor)
+        IndicateFunctionsOnly(editor)
         MarkupStyle(editor)
       end
       saved = true
@@ -937,7 +931,8 @@ local function closeWindow(event)
   frame.uimgr:UnInit()
   frame:Hide() -- hide the main frame while the IDE exits
 
-  if ide.session.timer then ide.session.timer:Stop() end
+  -- stop all the timers
+  for _, timer in pairs(ide.timers) do timer:Stop() end
 
   event:Skip()
 end
@@ -997,6 +992,9 @@ ide.editorApp:Connect(wx.wxEVT_SET_FOCUS, function(event)
   event:Skip()
 end)
 
+local updateInterval = 250 -- time in ms
+wx.wxUpdateUIEvent.SetUpdateInterval(updateInterval)
+
 ide.editorApp:Connect(wx.wxEVT_ACTIVATE_APP,
   function(event)
     if not ide.exitingProgram then
@@ -1007,19 +1005,23 @@ ide.editorApp:Connect(wx.wxEVT_ACTIVATE_APP,
         pcall(function() ide.infocus:SetFocus() end)
       end
 
+      local active = event:GetActive()
       -- save auto-recovery record when making the app inactive
-      if not event:GetActive() then saveAutoRecovery(true) end
+      if not active then saveAutoRecovery(true) end
 
-      local event = event:GetActive() and "onAppFocusSet" or "onAppFocusLost"
-      PackageEventHandle(event, ide.editorApp)
+      -- disable UI refresh when app is inactive, but only when not running
+      wx.wxUpdateUIEvent.SetUpdateInterval(
+        (active or ide:GetLaunchedProcess()) and updateInterval or -1)
+
+      PackageEventHandle(active and "onAppFocusSet" or "onAppFocusLost", ide.editorApp)
     end
     event:Skip()
   end)
 
 if ide.config.autorecoverinactivity then
-  ide.session.timer = wx.wxTimer(frame)
+  ide.timers.session = wx.wxTimer(frame)
   -- check at least 5s to be never more than 5s off
-  ide.session.timer:Start(math.min(5, ide.config.autorecoverinactivity)*1000)
+  ide.timers.session:Start(math.min(5, ide.config.autorecoverinactivity)*1000)
 end
 
 function PaneFloatToggle(window)

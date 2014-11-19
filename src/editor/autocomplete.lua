@@ -111,24 +111,9 @@ end
 -- ToolTip and reserved words list
 -- also fixes function descriptions
 
-local function formatUpToX(s, x)
-  local splitstr = "([ \t]*)(%S*)([ \t]*)(\n?)"
-  local t = {""}
-  for prefix, word, suffix, newline in s:gmatch(splitstr) do
-    if #(t[#t]) + #prefix + #word > x and #t > 0 then
-      table.insert(t, word..suffix)
-    else
-      t[#t] = t[#t]..prefix..word..suffix
-    end
-    if #newline > 0 then table.insert(t, "") end
-  end
-  return table.concat(t, "\n")
-end
-
 local function fillTips(api,apibasename)
   local apiac = api.ac
   local tclass = api.tip
-  local tipwidth = math.max(20, ide.config.acandtip.width)
 
   tclass.staticnames = {}
   tclass.keys = {}
@@ -152,8 +137,8 @@ local function fillTips(api,apibasename)
 
       if info.type == "function" or info.type == "method" or info.type == "value" then
         local frontname = (info.returns or "(?)").." "..fullkey.." "..(info.args or "(?)")
-        frontname = formatUpToX(frontname:gsub("\n"," "):gsub("\t",""), tipwidth)
-        local description = formatUpToX(info.description or "", tipwidth)
+        frontname = frontname:gsub("\n"," "):gsub("\t","")
+        local description = info.description or ""
 
         -- build info
         local inf = ((info.type == "value" and "" or frontname.."\n")
@@ -477,7 +462,6 @@ local function getAutoCompApiList(childs,fragment,method)
       ((method and v.type ~= "value")
         or (not method and v.type ~= "method"))) then
       local used = {}
-      --
       local kl = key:lower()
       for i=0,#key do
         local k = kl:sub(1,i)
@@ -507,8 +491,7 @@ local function getAutoCompApiList(childs,fragment,method)
   return t
 end
 
--- make syntype dependent
-function CreateAutoCompList(editor,key)
+function CreateAutoCompList(editor,key,pos)
   local api = editor.api
   local tip = api.tip
   local ac = api.ac
@@ -587,6 +570,27 @@ function CreateAutoCompList(editor,key)
 
   -- handle (multiple) inheritance; add matches from the parent class/lib
   addInheritance(tab, apilist, {[tab] = true})
+
+  -- include local/global variables
+  if ide.config.acandtip.symbols and not key:find(q(sep)) then
+    local vars, context = {}
+    local tokens = editor:GetTokenList()
+    for _, token in ipairs(tokens) do
+      if token.fpos > pos then break end
+      if token[1] == 'Id' or token[1] == 'Var' then
+        local var = token.name
+        if var ~= key and var:find(key, 1, true) == 1 then
+          -- if it's a global variable, store in the auto-complete list,
+          -- but if it's local, store separately as it needs to be checked
+          table.insert(token.context[var] and vars or apilist, var)
+        end
+        context = token.context
+      end
+    end
+    for _, var in pairs(context and vars or {}) do
+      if context[var] then table.insert(apilist, var) end
+    end
+  end
 
   local compstr = ""
   if apilist then

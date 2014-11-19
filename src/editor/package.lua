@@ -3,6 +3,7 @@
 
 local ide = ide
 local iscaseinsensitive = wx.wxFileName("A"):SameAs(wx.wxFileName("a"))
+local unpack = table.unpack or unpack
 local q = EscapeMagic
 
 function PackageEventHandle(event, ...)
@@ -64,14 +65,17 @@ function PackageRegister(file, ...)
   return PackageEventHandleOne(file, "onRegister", ...)
 end
 
-function ide:GetRootPath() return GetPathWithSep(ide.editorFilename) end
+function ide:GetRootPath(path)
+  return MergeFullPath(GetPathWithSep(ide.editorFilename), path or '')
+end
 function ide:GetPackagePath(packname)
   return MergeFullPath(
-    ide.oshome and MergeFullPath(ide.oshome, '.zbstudio/') or ide:GetRootPath(),
+    ide.oshome and MergeFullPath(ide.oshome, '.'..ide:GetAppName()..'/') or ide:GetRootPath(),
     MergeFullPath('packages', packname or '')
   )
 end
 function ide:GetApp() return self.editorApp end
+function ide:GetAppName() return ide.appname end
 function ide:GetEditor(index) return GetEditor(index) end
 function ide:GetEditorWithFocus(ed) return GetEditorWithFocus(ed) end
 function ide:GetEditorWithLastFocus()
@@ -88,6 +92,18 @@ function ide:GetMainFrame() return self.frame end
 function ide:GetUIManager() return self.frame.uimgr end
 function ide:GetDocument(ed) return self.openDocuments[ed:GetId()] end
 function ide:GetDocuments() return self.openDocuments end
+function ide:GetKnownExtensions()
+  local knownexts = {}
+  for _, spec in pairs(ide.specs) do
+    for _, ext in ipairs(spec.exts or {}) do table.insert(knownexts, ext) end
+  end
+  return knownexts
+end
+
+function ide:FindTopMenu(item)
+  local index = ide:GetMenuBar():FindMenu(TR(item))
+  return ide:GetMenuBar():GetMenu(index), index
+end
 function ide:FindMenuItem(itemid, menu)
   local item, imenu = ide:GetMenuBar():FindItem(itemid, menu)
   if menu and not item then item = menu:FindItem(itemid) end
@@ -132,13 +148,16 @@ function ide:GetInterpreter() return self.interpreter end
 function ide:GetInterpreters() return self.interpreters end
 function ide:GetConfig() return self.config end
 function ide:GetOutput() return self.frame.bottomnotebook.errorlog end
+function ide:GetConsole() return self.frame.bottomnotebook.shellbox end
 function ide:GetEditorNotebook() return self.frame.notebook end
+function ide:GetOutputNotebook() return self.frame.bottomnotebook end
 function ide:GetProject() return FileTreeGetDir() end
 function ide:GetLaunchedProcess() return self.debugger and self.debugger.pid end
 function ide:GetProjectTree() return ide.filetree.projtree end
 function ide:GetWatch() return self.debugger and self.debugger.watchCtrl end
 function ide:GetStack() return self.debugger and self.debugger.stackCtrl end
 function ide:Yield() wx.wxYield() end
+function ide:CreateBareEditor() return CreateEditor(true) end
 
 function ide:GetSetting(path, setting)
   local settings = self.settings
@@ -152,12 +171,15 @@ end
 function ide:RemoveMenuItem(id, menu)
   local _, menu, pos = ide:FindMenuItem(id, menu)
   if menu then
+    ide:GetMainFrame():Disconnect(id, wx.wxID_ANY, wx.wxEVT_COMMAND_MENU_SELECTED)
+    ide:GetMainFrame():Disconnect(id, wx.wxID_ANY, wx.wxEVT_UPDATE_UI)
     menu:Disconnect(id, wx.wxID_ANY, wx.wxEVT_COMMAND_MENU_SELECTED)
     menu:Disconnect(id, wx.wxID_ANY, wx.wxEVT_UPDATE_UI)
     menu:Remove(id)
 
     local positem = menu:FindItemByPosition(pos)
     if (not positem or positem:GetKind() == wx.wxITEM_SEPARATOR)
+    and pos > 0
     and (menu:FindItemByPosition(pos-1):GetKind() == wx.wxITEM_SEPARATOR) then
       menu:Destroy(menu:FindItemByPosition(pos-1))
     end
@@ -165,6 +187,73 @@ function ide:RemoveMenuItem(id, menu)
   end
   return false
 end
+
+function ide:ExecuteCommand(cmd, wdir, callback, endcallback)
+  local proc = wx.wxProcess(ide:GetOutput())
+  proc:Redirect()
+
+  local cwd
+  if (wdir and #wdir > 0) then -- ignore empty directory
+    cwd = wx.wxFileName.GetCwd()
+    cwd = wx.wxFileName.SetCwd(wdir) and cwd
+  end
+
+  local pid = wx.wxExecute(cmd, wx.wxEXEC_ASYNC, proc)
+  pid = pid ~= -1 and pid ~= 0 and pid or nil
+  if cwd then wx.wxFileName.SetCwd(cwd) end -- restore workdir
+  if not pid then return pid, wx.wxSysErrorMsg() end
+
+  OutputSetCallbacks(pid, proc, callback or function() end, endcallback)
+  return pid
+end
+
+function ide:CreateImageList(group, ...)
+  local log = wx.wxLogNull() -- disable error reporting in popup
+  local size = wx.wxSize(16,16)
+  local imglist = wx.wxImageList(16,16)
+  for i = 1, select('#', ...) do
+    local icon, file = self:GetBitmap(select(i, ...), group, size)
+    if imglist:Add(icon) == -1 then
+      DisplayOutputLn(("Failed to add image '%s' to the image list.")
+        :format(file or select(i, ...)))
+    end
+  end
+  return imglist
+end
+
+local icons = {} -- icon cache to avoid reloading the same icons
+function ide:GetBitmap(id, client, size)
+  local im = ide.config.imagemap
+  local width = size:GetWidth()
+  local key = width.."/"..id
+  local keyclient = key.."-"..client
+  local mapped = im[keyclient] or im[id.."-"..client] or im[key] or im[id]
+  if im[id.."-"..client] then keyclient = width.."/"..im[id.."-"..client]
+  elseif im[keyclient] then keyclient = im[keyclient]
+  elseif im[id] then
+    id = im[id]
+    key = width.."/"..id
+    keyclient = key.."-"..client
+  end
+
+  local fileClient = ide:GetAppName() .. "/res/" .. keyclient .. ".png"
+  local fileKey = ide:GetAppName() .. "/res/" .. key .. ".png"
+  local file
+  if mapped and wx.wxFileName(mapped):FileExists() then file = mapped
+  elseif wx.wxFileName(fileClient):FileExists() then file = fileClient
+  elseif wx.wxFileName(fileKey):FileExists() then file = fileKey
+  else return wx.wxArtProvider.GetBitmap(id, client, size) end
+  local icon = icons[file] or wx.wxBitmap(file)
+  icons[file] = icon
+  return icon, file
+end
+
+function ide:AddPackage(name, package)
+  ide.packages[name] = setmetatable(package, ide.proto.Plugin)
+  ide.packages[name].fname = name
+  return ide.packages[name]
+end
+function ide:RemovePackage(name) ide.packages[name] = nil end
 
 function ide:AddWatch(watch, value)
   local mgr = ide.frame.uimgr
@@ -190,18 +279,18 @@ function ide:AddWatch(watch, value)
     item = watchCtrl:GetNextSibling(item)
   end
 
-  local item = watchCtrl:AppendItem(root, watch, 1)
+  item = watchCtrl:AppendItem(root, watch, 1)
   watchCtrl:SetItemExpression(item, watch, value)
   return item
 end
 
 function ide:AddInterpreter(name, interpreter)
   self.interpreters[name] = setmetatable(interpreter, ide.proto.Interpreter)
-  UpdateInterpreters()
+  ProjectUpdateInterpreters()
 end
 function ide:RemoveInterpreter(name)
   self.interpreters[name] = nil
-  UpdateInterpreters()
+  ProjectUpdateInterpreters()
 end
 
 function ide:AddSpec(name, spec)
@@ -242,6 +331,7 @@ function ide:RemoveConfig(name)
   ReApplySpecAndStyles() -- apply current config to the UI
 end
 
+local panels = {}
 function ide:AddPanel(ctrl, panel, name, conf)
   local width, height = 360, 200
   local notebook = wxaui.wxAuiNotebook(ide.frame, wx.wxID_ANY,
@@ -251,6 +341,8 @@ function ide:AddPanel(ctrl, panel, name, conf)
   notebook:AddPage(ctrl, name, true)
   notebook:Connect(wxaui.wxEVT_COMMAND_AUINOTEBOOK_BG_DCLICK,
     function() PaneFloatToggle(notebook) end)
+  notebook:Connect(wxaui.wxEVT_COMMAND_AUINOTEBOOK_PAGE_CLOSE,
+    function(event) event:Veto() end)
 
   local mgr = ide.frame.uimgr
   mgr:AddPane(notebook, wxaui.wxAuiPaneInfo():
@@ -261,5 +353,29 @@ function ide:AddPanel(ctrl, panel, name, conf)
   if type(conf) == "function" then conf(mgr:GetPane(panel)) end
   mgr.defaultPerspective = mgr:SavePerspective() -- resave default perspective
 
+  panels[name] = {ctrl, panel, name, conf}
+  return mgr:GetPane(panel), notebook
+end
+
+function ide:AddPanelDocked(notebook, ctrl, panel, name, conf, activate)
+  notebook:AddPage(ctrl, name, activate ~= false)
+  panels[name] = {ctrl, panel, name, conf}
   return notebook
+end
+function ide:IsPanelDocked(panel)
+  local layout = ide:GetSetting("/view", "uimgrlayout")
+  return layout and not layout:find(panel)
+end
+
+function ide:RestorePanelByLabel(name)
+  if not panels[name] then return end
+  return ide:AddPanel(unpack(panels[name]))
+end
+
+function ide:AddTool(name, command, updateui)
+  return ToolsAddTool(name, command, updateui)
+end
+
+function ide:RemoveTool(name)
+  return ToolsRemoveTool(name)
 end

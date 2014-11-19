@@ -281,7 +281,7 @@ local function saveNotebook(nb)
   
   local function sortedPages(tab)
     local t = {}
-    for i,v in pairs(tab) do
+    for i in pairs(tab) do
       table.insert(t,i)
     end
     table.sort(t)
@@ -309,9 +309,9 @@ local function saveNotebook(nb)
     split = "<Y>"
   end
   
-  for i,v in ipairs(sortedUse) do
+  for _, v in ipairs(sortedUse) do
     local pages = pagesUse[v]
-    for n,id in ipairs(pages) do
+    for _, id in ipairs(pages) do
       str = str..id.."|"
     end
     str = str..split.."|"
@@ -392,18 +392,18 @@ function SettingsRestoreView()
   local layoutcur = uimgr:SavePerspective()
   local layout = settingsReadSafe(settings,"uimgrlayout",layoutcur)
   if (layout ~= layoutcur) then
-    -- save the current toolbar configuration and restore re-apply it
-    -- as it's always correct (to avoid storing minh and minw values)
+    -- save the current toolbar besth and re-apply after perspective is loaded
+    -- bestw and besth has two separate issues:
+    -- (1) layout includes bestw that is only as wide as the toolbar size,
+    -- this leaves default background on the right side of the toolbar;
+    -- fix it by explicitly replacing with the screen width.
+    -- (2) besth may be wrong after icon size changes.
     local toolbar = frame.uimgr:GetPane("toolbar")
-    local toolbarlayout = (toolbar:IsOk()
-      -- layout includes bestw that is only as wide as the toolbar size,
-      -- this leaves default background on the right side of the toolbar;
-      -- fix it by explicitly replacing with the screen width
-      and uimgr:SavePaneInfo(toolbar):gsub("(bestw=)[^;]+",
-        function(s) return s..wx.wxSystemSettings.GetMetric(wx.wxSYS_SCREEN_X) end)
-      or nil)
+    local besth = toolbar:IsOk() and tonumber(uimgr:SavePaneInfo(toolbar):match("besth=([^;]+)"))
     uimgr:LoadPerspective(layout, false)
-    if toolbarlayout then uimgr:LoadPaneInfo(toolbarlayout, toolbar) end
+    if toolbar:IsOk() then -- fix bestw and besth values
+      toolbar:BestSize(wx.wxSystemSettings.GetMetric(wx.wxSYS_SCREEN_X), besth or -1)
+    end
 
     -- check if debugging panes are not mentioned and float them
     for _, name in pairs({"stackpanel", "watchpanel"}) do
@@ -428,8 +428,8 @@ function SettingsRestoreView()
 
   uimgr:Update()
   
-  local layoutcur = saveNotebook(frame.bottomnotebook)
-  local layout = settingsReadSafe(settings,"nbbtmlayout",layoutcur)
+  layoutcur = saveNotebook(frame.bottomnotebook)
+  layout = settingsReadSafe(settings,"nbbtmlayout",layoutcur)
   if (layout ~= layoutcur) then
     loadNotebook(ide.frame.bottomnotebook,layout,
       -- treat "Output (running)" same as "Output"
@@ -442,8 +442,8 @@ function SettingsRestoreView()
   local index = bottomnotebook:GetPageIndex(bottomnotebook.errorlog)
   if index >= 0 then bottomnotebook:SetSelection(index) end
 
-  local layoutcur = saveNotebook(frame.notebook)
-  local layout = settingsReadSafe(settings,"nblayout",layoutcur)
+  layoutcur = saveNotebook(frame.notebook)
+  layout = settingsReadSafe(settings,"nblayout",layoutcur)
   if (layout ~= layoutcur) then
     loadNotebook(ide.frame.notebook,layout)
     local openDocuments = ide.openDocuments
@@ -457,7 +457,6 @@ function SettingsRestoreView()
   -- restore configuration for notebook pages that have been split;
   -- load saved dock_size values and update current values with saved ones
   -- where dock_size configuration matches
-  local docksizemask = '(dock_size[^=]+=)(%d+)'
   for l, m in pairs({
     nbdocklayout = frame.notebook:GetAuiManager(),
     nbbtmdocklayout = frame.bottomnotebook:GetAuiManager(),
@@ -469,7 +468,7 @@ function SettingsRestoreView()
         local val = prevlayout:match(EscapeMagic(t)..'(%d+)')
         return t..(val or v)
       end)
-    if newlayout ~= curlayour then m:LoadPerspective(newlayout) end
+    if newlayout ~= curlayout then m:LoadPerspective(newlayout) end
   end
 
   local editor = GetEditor()
@@ -504,6 +503,8 @@ function SettingsRestoreEditorSettings()
 
   ide.config.interpreter = settingsReadSafe(settings,"interpreter",ide.config.interpreter)
   ProjectSetInterpreter(ide.config.interpreter)
+
+  settings:SetPath(path)
 end
 
 function SettingsSaveEditorSettings()

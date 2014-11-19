@@ -4,6 +4,7 @@
 ---------------------------------------------------------
 
 local ide = ide
+
 -- ---------------------------------------------------------------------------
 -- Create the Edit menu and attach the callback functions
 
@@ -26,13 +27,13 @@ local editMenu = wx.wxMenu {
 }
 
 editMenu:Append(ID_SOURCE, TR("Source"), wx.wxMenu {
-  { ID_COMMENT, TR("&Comment/Uncomment")..KSC(ID_COMMENT), TR("Comment or uncomment current or selected lines") },
+  { ID_COMMENT, TR("C&omment/Uncomment")..KSC(ID_COMMENT), TR("Comment or uncomment current or selected lines") },
   { ID_REINDENT, TR("Correct &Indentation")..KSC(ID_REINDENT), TR("Re-indent selected lines") },
   { ID_FOLD, TR("&Fold/Unfold All")..KSC(ID_FOLD), TR("Fold or unfold all code folds") },
   { ID_SORT, TR("&Sort")..KSC(ID_SORT), TR("Sort selected lines") },
 })
 editMenu:Append(ID_BOOKMARK, TR("Bookmark"), wx.wxMenu {
-  { ID_BOOKMARKTOGGLE, TR("Toggle Bookmark")..KSC(ID_BOOKMARKTOGGLE) },
+  { ID_BOOKMARKTOGGLE, TR("Toggle Bookmark")..KSC(ID_BOOKMARKTOGGLE), TR("Toggle bookmark") },
   { ID_BOOKMARKNEXT, TR("Go To Next Bookmark")..KSC(ID_BOOKMARKNEXT) },
   { ID_BOOKMARKPREV, TR("Go To Previous Bookmark")..KSC(ID_BOOKMARKPREV) },
 })
@@ -191,11 +192,6 @@ frame:Connect(ID_COMMENT, wx.wxEVT_COMMAND_MENU_SELECTED,
     local lc = editor.spec.linecomment
     if not lc then return end
 
-    -- capture the current position in line to restore later
-    local curline = editor:GetCurrentLine()
-    local curlen = #editor:GetLine(curline)
-    local curpos = editor:GetCurrentPos()-editor:PositionFromLine(curline)
-
     -- for multi-line selection, always start the first line at the beginning
     local ssel, esel = editor:GetSelectionStart(), editor:GetSelectionEnd()
     local sline = editor:LineFromPosition(ssel)
@@ -232,18 +228,12 @@ frame:Connect(ID_COMMENT, wx.wxEVT_COMMAND_MENU_SELECTED,
         editor:DeleteRange(cpos-#lc+editor:PositionFromLine(line), #lc)
       elseif comment and text:find("%S")
       and (line == sline or line < eline or esel-editor:PositionFromLine(line) > 0) then
-        editor:InsertText(pos+editor:PositionFromLine(line)-1, lc)
+        editor:SetTargetStart(pos+editor:PositionFromLine(line)-1)
+        editor:SetTargetEnd(editor:GetTargetStart())
+        editor:ReplaceTarget(lc)
       end
     end
     editor:EndUndoAction()
-
-    -- fix position if it was after where the selection started
-    if editor:PositionFromLine(curline)+curpos > ssel then
-      -- position the cursor exactly where its position was, which
-      -- could have shifted depending on whether the text was added or removed.
-      editor:GotoPos(editor:PositionFromLine(curline)
-        + math.max(0, curpos+#editor:GetLine(curline)-curlen))
-    end
   end)
 
 local function processSelection(editor, func)

@@ -11,6 +11,7 @@ ide.proto.Document = {__index = {
   IsModified = function(self) return self.isModified end,
   SetModified = function(self, modified) SetDocumentModified(self.editor:GetId(), modified) end,
   SetTabText = function(self, text) SetDocumentModified(self.editor:GetId(), self.isModified, text) end,
+  SetActive = function(self) SetEditorSelection(self.index) end,
 }}
 
 ide.proto.Plugin = {__index = {
@@ -24,6 +25,14 @@ ide.proto.Plugin = {__index = {
 ide.proto.Interpreter = {__index = {
   GetName = function(self) return self.name end,
   GetFileName = function(self) return self.fname end,
+  GetAPI = function(self) return self.api end,
+  fprojdir = function(self,wfilename)
+    return wfilename:GetPath(wx.wxPATH_GET_VOLUME)
+  end,
+  fworkdir = function (self,wfilename)
+    local proj = ide:GetProject()
+    return proj and proj:gsub("[\\/]$","") or wfilename:GetPath(wx.wxPATH_GET_VOLUME)
+  end,
 }}
 
 ide.proto.Debugger = {__index = {

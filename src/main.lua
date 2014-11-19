@@ -53,6 +53,8 @@ ide = {
       smartindent = true,
       fold = true,
       autoreload = true,
+      indentguide = true,
+      backspaceunindent = true,
     },
     debugger = {
       verbose = false,
@@ -72,7 +74,9 @@ ide = {
     filetree = {
       mousemove = true,
     },
-    funclist = {},
+    outline = {
+      showanonymous = '~',
+    },
 
     toolbar = {
       icons = {},
@@ -80,6 +84,9 @@ ide = {
     },
 
     keymap = {},
+    imagemap = {
+      ['VALUE-MCALL'] = 'VALUE-SCALL',
+    },
     messages = {},
     language = "en",
 
@@ -92,8 +99,10 @@ ide = {
       shorttip = true,
       nodynwords = true,
       ignorecase = false,
+      symbols = true,
       strategy = 2,
       width = 60,
+      maxlength = 450,
     },
     arg = {}, -- command line arguments
 
@@ -106,7 +115,8 @@ ide = {
     unhidewindow = false, -- to unhide a gui window
     allowinteractivescript = true, -- allow interaction in the output window
     projectautoopen = true,
-    autorecoverinactivity = 10,
+    autorecoverinactivity = 10, -- seconds
+    outlineinactivity = 0.250, -- seconds
     filehistorylength = 20,
     projecthistorylength = 20,
     savebak = false,
@@ -126,6 +136,7 @@ ide = {
   interpreters = {},
   packages = {},
   apis = {},
+  timers = {},
 
   proto = {}, -- prototypes for various classes
 
@@ -161,7 +172,6 @@ ide = {
     oNormal = nil,
     oItalic = nil,
     fNormal = nil,
-    dNormal = nil,
   },
 
   osname = wx.wxPlatformInfo.Get():GetOperatingSystemFamilyName(),
@@ -169,6 +179,8 @@ ide = {
   oshome = os.getenv("HOME") or (iswindows and os.getenv('HOMEDRIVE') and os.getenv('HOMEPATH')
     and (os.getenv('HOMEDRIVE')..os.getenv('HOMEPATH'))),
   wxver = string.match(wx.wxVERSION_STRING, "[%d%.]+"),
+
+  test = {}, -- local functions used for testing
 }
 
 -- add wx.wxMOD_RAW_CONTROL as it's missing in wxlua 2.8.12.3;
@@ -218,11 +230,11 @@ local function setLuaPaths(mainpath, osname)
   local luadev_path = (luadev
     and ('LUA_DEV/?.lua;LUA_DEV/?/init.lua;LUA_DEV/lua/?.lua;LUA_DEV/lua/?/init.lua')
       :gsub('LUA_DEV', (luadev:gsub('[\\/]$','')))
-    or "")
+    or nil)
   local luadev_cpath = (luadev
     and ('LUA_DEV/?.dll;LUA_DEV/?51.dll;LUA_DEV/clibs/?.dll;LUA_DEV/clibs/?51.dll')
       :gsub('LUA_DEV', (luadev:gsub('[\\/]$','')))
-    or "")
+    or nil)
 
   if luadev then
     local path, clibs = os.getenv('PATH'), luadev:gsub('[\\/]$','')..'\\clibs'
@@ -235,21 +247,28 @@ local function setLuaPaths(mainpath, osname)
   -- if the path has an excamation mark, allow Lua to expand it as this
   -- expansion happens only once.
   if osname == "Windows" and mainpath:find('%!') then mainpath = "!/../" end
-  wx.wxSetEnv("LUA_PATH", package.path .. ";"
-    .. "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua" .. ';'
-    .. mainpath.."lualibs/?/?.lua;"..mainpath.."lualibs/?.lua" .. ';'
-    .. luadev_path)
 
-  local clibs =
+  -- if LUA_PATH or LUA_CPATH is not specified, then add ;;
+  -- ;; will be replaced with the default (c)path by the Lua interpreter
+  wx.wxSetEnv("LUA_PATH",
+    (os.getenv("LUA_PATH") or ';') .. ';'
+    .. "./?.lua;./?/init.lua;./lua/?.lua;./lua/?/init.lua" .. ';'
+    .. mainpath.."lualibs/?/?.lua;"..mainpath.."lualibs/?.lua"
+    .. (luadev_path and (';' .. luadev_path) or ''))
+
+  ide.osclibs = -- keep the list to use for other Lua versions
     osname == "Windows" and mainpath.."bin/?.dll;"..mainpath.."bin/clibs/?.dll" or
     osname == "Macintosh" and mainpath.."bin/lib?.dylib;"..mainpath.."bin/clibs/?.dylib" or
     osname == "Unix" and mainpath..("bin/linux/%s/lib?.so;"):format(arch)
                        ..mainpath..("bin/linux/%s/clibs/?.so"):format(arch) or
-    nil
-  if clibs then wx.wxSetEnv("LUA_CPATH",
-    package.cpath .. ';' .. clibs .. ';' .. luadev_cpath) end
-  ide.osclibs = clibs -- keep the list to use for other Lua versions
+    assert(false, "Unexpected OS name")
+
+  wx.wxSetEnv("LUA_CPATH",
+    (os.getenv("LUA_CPATH") or ';') .. ';' .. ide.osclibs
+    .. (luadev_cpath and (';' .. luadev_cpath) or ''))
 end
+
+ide.test.setLuaPaths = setLuaPaths
 
 ---------------
 -- process args
@@ -273,8 +292,8 @@ do
   end
 
   ide.editorFilename = fullPath
-  ide.config.path.app = fullPath:match("([%w_-%.]+)$"):gsub("%.[^%.]*$","")
-  assert(ide.config.path.app, "no application path defined")
+  ide.appname = fullPath:match("([%w_-%.]+)$"):gsub("%.[^%.]*$","")
+  assert(ide.appname, "no application path defined")
 
   for index = 2, #arg do
     if (arg[index] == "-cfg" and index+1 <= #arg) then
@@ -292,7 +311,7 @@ end
 ----------------------
 -- process application
 
-ide.app = dofile(ide.config.path.app.."/app.lua")
+ide.app = dofile(ide.appname.."/app.lua")
 local app = assert(ide.app)
 
 local function loadToTab(filter, folder, tab, recursive, proto)
@@ -320,7 +339,7 @@ end
 local function loadPackages(filter)
   loadToTab(filter, "packages", ide.packages, false, ide.proto.Plugin)
   if ide.oshome then
-    local userpackages = MergeFullPath(ide.oshome, ".zbstudio/packages")
+    local userpackages = MergeFullPath(ide.oshome, "."..ide.appname.."/packages")
     if wx.wxDirExists(userpackages) then
       loadToTab(filter, userpackages, ide.packages, false, ide.proto.Plugin)
     end
@@ -423,7 +442,7 @@ do
   end
 end
 
-LoadLuaConfig(ide.config.path.app.."/config.lua")
+LoadLuaConfig(ide.appname.."/config.lua")
 
 ide.editorApp:SetAppName(GetIDEString("settingsapp"))
 
@@ -453,7 +472,7 @@ loadTools()
 do
   ide.configs = {
     system = MergeFullPath("cfg", "user.lua"),
-    user = ide.oshome and MergeFullPath(ide.oshome, ".zbstudio/user.lua"),
+    user = ide.oshome and MergeFullPath(ide.oshome, "."..ide.appname.."/user.lua"),
   }
 
   -- process configs
@@ -476,8 +495,8 @@ loadPackages()
 -- Load App
 
 for _, file in ipairs({
-    "markup", "settings", "singleinstance", "iofilters",
-    "package", "gui", "filetree", "output", "debugger",
+    "markup", "settings", "singleinstance", "iofilters", "package",
+    "gui", "filetree", "output", "debugger", "outline", "commandbar",
     "editor", "findreplace", "commands", "autocomplete", "shellbox",
     "menu_file", "menu_edit", "menu_search",
     "menu_view", "menu_project", "menu_tools", "menu_help",
@@ -487,6 +506,9 @@ end
 
 -- register all the plugins
 PackageEventHandle("onRegister")
+
+-- initialization that was delayed until configs processed and packages loaded
+ProjectUpdateInterpreters()
 
 -- load rest of settings
 SettingsRestoreEditorSettings()

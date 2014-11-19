@@ -8,10 +8,10 @@ local editorID = 100 -- window id to create editor pages with, incremented for n
 local openDocuments = ide.openDocuments
 local statusBar = ide.frame.statusBar
 local notebook = ide.frame.notebook
-local funclist = ide.frame.toolBar.funclist
 local edcfg = ide.config.editor
 local styles = ide.config.styles
 local unpack = table.unpack or unpack
+local q = EscapeMagic
 
 local margin = { LINENUMBER = 0, MARKER = 1, FOLD = 2 }
 local linenummask = "99999"
@@ -37,14 +37,10 @@ local foldtypes = {
 -- Only update if the text has changed.
 local statusTextTable = { "OVR?", "R/O?", "Cursor Pos" }
 
-funclist:SetFont(ide.font.dNormal)
-
 local function updateStatusText(editor)
   local texts = { "", "", "" }
   if ide.frame and editor then
     local pos = editor:GetCurrentPos()
-    local line = editor:LineFromPosition(pos)
-    local col = 1 + pos - editor:PositionFromLine(line)
     local selected = #editor:GetSelectedText()
     local selections = ide.wxver >= "2.9.5" and editor:GetSelections() or 1
 
@@ -52,8 +48,8 @@ local function updateStatusText(editor)
       iff(editor:GetOvertype(), TR("OVR"), TR("INS")),
       iff(editor:GetReadOnly(), TR("R/O"), TR("R/W")),
       table.concat({
-        TR("Ln: %d"):format(line + 1),
-        TR("Col: %d"):format(col),
+        TR("Ln: %d"):format(editor:LineFromPosition(pos) + 1),
+        TR("Col: %d"):format(editor:GetColumn(pos) + 1),
         selected > 0 and TR("Sel: %d/%d"):format(selected, selections) or "",
       }, ' ')}
   end
@@ -176,9 +172,6 @@ function SetEditorSelection(selection)
   ide.frame:SetTitle(ExpandPlaceholders(ide.config.format.apptitle))
 
   if editor then
-    if funclist:IsEmpty() then funclist:Append(TR("Jump to a function definition..."), 0) end
-    funclist:SetSelection(0)
-
     editor:SetFocus()
     editor:SetSTCFocus(true)
 
@@ -248,11 +241,11 @@ function EditorAutoComplete(editor)
   lt = lt:gsub("%b()","")
   lt = lt:gsub("%b{}","")
   lt = lt:gsub("%b[]",".0")
-  -- match from starting brace
-  lt = lt:match("[^%[%(%{%s,]*$")
+  -- remove everything that can't be auto-completed
+  lt = lt:match("[%w_"..q(editor.spec.sep).."]*$")
 
   -- know now which string is to be completed
-  local userList = CreateAutoCompList(editor,lt)
+  local userList = CreateAutoCompList(editor, lt, pos)
 
   -- remove any suggestions that match the word the cursor is on
   -- for example, if typing 'foo' in front of 'bar', 'foobar' is not offered
@@ -328,6 +321,21 @@ local function getValAtPosition(editor, pos)
   return var, funccall
 end
 
+local function formatUpToX(s)
+  local x = math.max(20, ide.config.acandtip.width)
+  local splitstr = "([ \t]*)(%S*)([ \t]*)(\n?)"
+  local t = {""}
+  for prefix, word, suffix, newline in s:gmatch(splitstr) do
+    if #(t[#t]) + #prefix + #word > x and #t > 0 then
+      table.insert(t, word..suffix)
+    else
+      t[#t] = t[#t]..prefix..word..suffix
+    end
+    if #newline > 0 then table.insert(t, "") end
+  end
+  return table.concat(t, "\n")
+end
+
 local function callTipFitAndShow(editor, pos, tip)
   local point = editor:PointFromPosition(pos)
   local height = editor:TextHeight(pos)
@@ -339,7 +347,7 @@ local function callTipFitAndShow(editor, pos, tip)
   -- find the longest line in terms of width in pixels.
   local maxwidth = 0
   local lines = {}
-  for line in tip:gmatch("[^\n]*\n?") do
+  for line in formatUpToX(tip):gmatch("[^\n]*\n?") do
     local width = editor:TextWidth(wxstc.wxSTC_STYLE_DEFAULT, line)
     if width > maxwidth then maxwidth = width end
     table.insert(lines, line)
@@ -373,9 +381,9 @@ function EditorCallTip(editor, pos, x, y)
   -- if this is a value type rather than a function/method call, then use
   -- full match to avoid calltip about coroutine.status for "status" vars
   local tip = GetTipInfo(editor, funccall or var, false, not funccall)
+  local limit = ide.config.acandtip.maxlength
   if ide.debugger and ide.debugger.server then
     if var then
-      local limit = 128
       ide.debugger.quickeval(var, function(val)
         if #val > limit then val = val:sub(1, limit-3).."..." end
         -- check if the mouse position is specified and the mouse has moved,
@@ -384,19 +392,21 @@ function EditorCallTip(editor, pos, x, y)
           local mpos = wx.wxGetMousePosition()
           if mpos.x ~= x or mpos.y ~= y then return end
         end
-        callTipFitAndShow(editor, pos, val)
+        if PackageEventHandle("onEditorCallTip", editor, val, funccall or var, true) ~= false then
+          callTipFitAndShow(editor, pos, val)
+        end
       end)
     end
   elseif tip then
+    local oncalltip = PackageEventHandle("onEditorCallTip", editor, tip, funccall or var, false)
     -- only shorten if shown on mouse-over. Use shortcut to get full info.
-    local shortento = 450
     local showtooltip = ide.frame.menuBar:FindItem(ID_SHOWTOOLTIP)
     local suffix = "...\n"
         ..TR("Use '%s' to see full description."):format(showtooltip:GetLabel())
-    if x and y and #tip > shortento then
-      tip = tip:sub(1, shortento-#suffix):gsub("%W*%w*$","")..suffix
+    if x and y and #tip > limit then
+      tip = tip:sub(1, limit-#suffix):gsub("%W*%w*$","")..suffix
     end
-    callTipFitAndShow(editor, pos, tip)
+    if oncalltip ~= false then callTipFitAndShow(editor, pos, tip) end
   end
 end
 
@@ -411,11 +421,14 @@ function EditorIsModified(editor)
 end
 
 -- Indicator handling for functions and local/global variables
-local function indicateFunctionsOnly(editor, lines, linee)
-  if not (edcfg.showfncall and editor.spec and editor.spec.isfncall)
-  or not (styles.indicator and styles.indicator.fncall) then return end
+-- indicator.MASKED is handled separately, so don't include in MAX
+local indicator = {FNCALL = 0, LOCAL = 1, GLOBAL = 2, MASKING = 3, MASKED = 4, MAX = 3}
 
-  local es = editor:GetEndStyled()
+function IndicateFunctionsOnly(editor, lines, linee)
+  local sindic = styles.indicator
+  if not (edcfg.showfncall and editor.spec and editor.spec.isfncall)
+  or not (sindic and sindic.fncall and sindic.fncall.st ~= wxstc.wxSTC_INDIC_HIDDEN) then return end
+
   local lines = lines or 0
   local linee = linee or editor:GetLineCount()-1
 
@@ -427,18 +440,14 @@ local function indicateFunctionsOnly(editor, lines, linee)
   for i,v in pairs(editor.spec.iskeyword0) do isinvalid[i] = v end
   for i,v in pairs(editor.spec.isstring) do isinvalid[i] = v end
 
-  local INDICS_MASK = wxstc.wxSTC_INDICS_MASK
-  local INDIC0_MASK = wxstc.wxSTC_INDIC0_MASK
-
+  editor:SetIndicatorCurrent(indicator.FNCALL)
   for line=lines,linee do
     local tx = editor:GetLine(line)
     local ls = editor:PositionFromLine(line)
+    editor:IndicatorClearRange(ls, #tx)
 
     local from = 1
     local off = -1
-
-    editor:StartStyling(ls,INDICS_MASK)
-    editor:SetStyling(#tx,0)
     while from do
       tx = from==1 and tx or string.sub(tx,from)
 
@@ -447,21 +456,15 @@ local function indicateFunctionsOnly(editor, lines, linee)
       if (f) then
         local p = ls+f+off
         local s = bit.band(editor:GetStyleAt(p),31)
-        editor:StartStyling(p,INDICS_MASK)
-        editor:SetStyling(#w,isinvalid[s] and 0 or (INDIC0_MASK + 1))
+        if not isinvalid[s] then editor:IndicatorFillRange(p, #w) end
         off = off + t
       end
       from = t and (t+1)
     end
   end
-  editor:StartStyling(es,31)
 end
 
 local delayed = {}
-local tokenlists = {}
-
--- indicator.MASKED is handled separately, so don't include in MAX
-local indicator = {FNCALL = 0, LOCAL = 1, GLOBAL = 2, MASKING = 3, MASKED = 4, MAX = 3}
 
 function IndicateIfNeeded()
   local editor = GetEditor()
@@ -473,7 +476,7 @@ end
 -- find all instances of a symbol at pos
 -- return table with [0] as the definition position (if local)
 local function indicateFindInstances(editor, name, pos)
-  local tokens = tokenlists[editor] or {}
+  local tokens = editor:GetTokenList()
   local instances = {{[-1] = 1}}
   local this
   for _, token in ipairs(tokens) do
@@ -506,7 +509,9 @@ local function indicateFindInstances(editor, name, pos)
   return this and instances[#instances] or {}
 end
 
-function IndicateAll(editor, lines, linee)
+function IndicateAll(editor, lines)
+  if not ide.config.autoanalyzer then return end
+
   local d = delayed[editor]
   delayed[editor] = nil -- assume this can be finished for now
 
@@ -514,10 +519,9 @@ function IndicateAll(editor, lines, linee)
   -- when there are still some pending events for it, so handle it.
   if not pcall(function() editor:GetId() end) then return end
 
-  -- if markvars is not set in the spec, check for functions-only indicators
-  if not (editor.spec and editor.spec.markvars) then
-    return indicateFunctionsOnly(editor, lines, linee)
-  end
+  -- if markvars is not set in the spec, nothing else to do
+  if not (editor.spec and editor.spec.marksymbols) then return end
+
   local indic = styles.indicator or {}
 
   local pos, vars = d and d[1] or 1, d and d[2] or nil
@@ -527,8 +531,7 @@ function IndicateAll(editor, lines, linee)
     pos, vars = 1, nil
   end
 
-  tokenlists[editor] = tokenlists[editor] or {}
-  local tokens = tokenlists[editor]
+  local tokens = editor:GetTokenList()
 
   if start then -- if the range is specified
     local curindic = editor:GetIndicatorCurrent()
@@ -536,7 +539,7 @@ function IndicateAll(editor, lines, linee)
     for n = #tokens, 1, -1 do
       local token = tokens[n]
       -- find the last token before the range
-      if token[1] == 'EndScope' and token.name and token.fpos+#token.name < start then
+      if not token.nobreak and token.name and token.fpos+#token.name < start then
         pos, vars = token.fpos+#token.name, token.context
         break
       end
@@ -574,8 +577,7 @@ function IndicateAll(editor, lines, linee)
     end
   else
     if pos == 1 then -- if not continuing, then trim the list
-      tokens = {}
-      tokenlists[editor] = tokens
+      tokens = editor:ResetTokenList()
     end
   end
 
@@ -591,19 +593,21 @@ function IndicateAll(editor, lines, linee)
 
   local s = TimeGet()
   local canwork = start and 0.010 or 0.100 -- use shorter interval when typing
-  local f = editor.spec.markvars(editor:GetText(), pos, vars)
-
+  local f = editor.spec.marksymbols(editor:GetText(), pos, vars)
   while true do
-    local op, name, lineinfo, vars, at = f()
+    local op, name, lineinfo, vars, at, nobreak = f()
     if not op then break end
     local var = vars and vars[name]
     local token = {op, name=name, fpos=lineinfo, at=at, context=vars,
-      self = (op == 'VarSelf') or nil }
+      self = (op == 'VarSelf') or nil, nobreak=nobreak}
+    if op == 'Function' then
+      vars['function'] = (vars['function'] or 0) + 1
+    end
     if op == 'FunctionCall' then
       if indic.fncall and edcfg.showfncall then
         IndicateOne(indicator.FNCALL, lineinfo, #name)
       end
-    elseif op ~= 'VarNext' and op ~= 'VarInside' and op ~= 'Statement' then
+    elseif op ~= 'VarNext' and op ~= 'VarInside' and op ~= 'Statement' and op ~= 'String' then
       table.insert(tokens, token)
     end
 
@@ -620,13 +624,13 @@ function IndicateAll(editor, lines, linee)
       if indic.varmasked and not var.masked.self then
         editor:SetIndicatorCurrent(indicator.MASKED)
         editor:IndicatorFillRange(fpos-1, #name)
-        table.insert(tokens, {"Masked", name=name, fpos=fpos})
+        table.insert(tokens, {"Masked", name=name, fpos=fpos, nobreak=nobreak})
       end
 
       if indic.varmasking then IndicateOne(indicator.MASKING, lineinfo, #name) end
     end
-    if op == 'EndScope' and name and TimeGet()-s > canwork then
-      delayed[editor] = {lineinfo+#name, vars}
+    if lineinfo and not nobreak and (op == 'Statement' or op == 'String') and TimeGet()-s > canwork then
+      delayed[editor] = {lineinfo, vars}
       break
     end
   end
@@ -637,18 +641,25 @@ function IndicateAll(editor, lines, linee)
   -- don't clear "masked" indicators as those can be set out of order (so
   -- last updated fragment is not always the last in terms of its position);
   -- these indicators should be up-to-date to the end of the code fragment.
-  for indic = 0, indicator.MAX do IndicateOne(indic, pos, 0) end
+  -- also don't clear "funccall" indicators as those can be set based on
+  -- IndicateFunctionsOnly processing, which is dealt with separately
+  local funconly = ide.config.editor.showfncall and editor.spec.isfncall
+  for indic = funconly and indicator.LOCAL or indicator.FNCALL, indicator.MAX do
+    IndicateOne(indic, pos, 0)
+  end
 
-  return delayed[editor] ~= nil -- request more events if still need to work
-end
-
-if ide.wxver < "2.9.5" or not ide.config.autoanalyzer then
-  IndicateAll = indicateFunctionsOnly
+  local needmore = delayed[editor] ~= nil
+  if ide.config.outlineinactivity then
+    if needmore then ide.timers.outline:Stop()
+    else ide.timers.outline:Start(ide.config.outlineinactivity*1000, wx.wxTIMER_ONE_SHOT)
+    end
+  end
+  return needmore -- request more events if still need to work
 end
 
 -- ----------------------------------------------------------------------------
 -- Create an editor
-function CreateEditor()
+function CreateEditor(bare)
   local editor = wxstc.wxStyledTextCtrl(notebook, editorID,
     wx.wxDefaultPosition, wx.wxSize(0, 0),
     wx.wxBORDER_NONE)
@@ -661,6 +672,7 @@ function CreateEditor()
   editor.bom = false
   editor.jumpstack = {}
   editor.ctrlcache = {}
+  editor.tokenlist = {}
   -- populate cache with Ctrl-<letter> combinations for workaround on Linux
   -- http://wxwidgets.10942.n7.nabble.com/Menu-shortcuts-inconsistentcy-issue-td85065.html
   for id, shortcut in pairs(ide.config.keymap) do
@@ -689,7 +701,7 @@ function CreateEditor()
   editor:SetTabWidth(tonumber(edcfg.tabwidth) or 2)
   editor:SetIndent(tonumber(edcfg.tabwidth) or 2)
   editor:SetUseTabs(edcfg.usetabs and true or false)
-  editor:SetIndentationGuides(true)
+  editor:SetIndentationGuides(edcfg.indentguide and true or false)
   editor:SetViewWhiteSpace(edcfg.whitespace and true or false)
 
   if (edcfg.usewrap) then
@@ -779,6 +791,9 @@ function CreateEditor()
     self:EnsureVisibleEnforcePolicy(self:LineFromPosition(pos))
   end
 
+  function editor:GetTokenList() return self.tokenlist end
+  function editor:ResetTokenList() self.tokenlist = {}; return self.tokenlist end
+
   -- GotoPos should work by itself, but it doesn't (wx 2.9.5).
   -- This is likely because the editor window hasn't been refreshed yet,
   -- so its LinesOnScreen method returns 0/-1, which skews the calculations.
@@ -808,6 +823,8 @@ function CreateEditor()
   end
 
   function editor:SetupKeywords(...) return SetupKeywords(self, ...) end
+
+  if bare then return editor end -- bare editor doesn't have any event handlers
 
   editor.ev = {}
   editor:Connect(wxstc.wxEVT_STC_MARGINCLICK,
@@ -928,7 +945,9 @@ function CreateEditor()
         local tip = GetTipInfo(editor,linetxtopos,ide.config.acandtip.shorttip)
         if tip then
           if editor:CallTipActive() then editor:CallTipCancel() end
-          callTipFitAndShow(editor, pos, tip)
+          if PackageEventHandle("onEditorCallTip", editor, tip) ~= false then
+            callTipFitAndShow(editor, pos, tip)
+          end
         end
 
       elseif ide.config.autocomplete then -- code completion prompt
@@ -1054,8 +1073,24 @@ function CreateEditor()
       end
     end)
 
+  local alreadyProcessed = 0
   editor:Connect(wxstc.wxEVT_STC_UPDATEUI,
     function (event)
+      -- some of UPDATEUI events are triggered by blinking cursor, and since
+      -- there are no changes, the rest of the processing can be skipped;
+      -- the reason for `alreadyProcessed` is that it is not possible
+      -- to completely skip all of these updates as this causes the issue
+      -- of markup styling becoming visible after text deletion by Backspace.
+      -- to avoid this, we allow the first update after any updates caused
+      -- by real changes; the rest of UPDATEUI events are skipped.
+      if event:GetUpdated() == wxstc.wxSTC_UPDATE_CONTENT
+      and not next(editor.ev) then
+         if alreadyProcessed > 1 then return end
+      else
+         alreadyProcessed = 0
+      end
+      alreadyProcessed = alreadyProcessed + 1
+
       PackageEventHandle("onEditorUpdateUI", editor, event)
 
       if ide.osname ~= 'Windows' then updateStatusText(editor) end
@@ -1066,8 +1101,9 @@ function CreateEditor()
       for _,iv in ipairs(editor.ev) do
         local line = editor:LineFromPosition(iv[1])
         if not minupdated or line < minupdated then minupdated = line end
-        local ok, res = pcall(IndicateAll, editor,line,line+iv[2])
+        local ok, res = pcall(IndicateAll, editor, line)
         if not ok then DisplayOutputLn("Internal error: ",res,line,line+iv[2]) end
+        IndicateFunctionsOnly(editor,line,line+iv[2])
       end
       local firstvisible = editor:DocLineFromVisible(editor:GetFirstVisibleLine())
       local lastline = math.min(editor:GetLineCount(),
@@ -1189,6 +1225,20 @@ function CreateEditor()
           -- auto-complete suggestions.
           local style = bit.band(editor:GetStyleAt(pos), 31)
           if not MarkupIsSpecial or not MarkupIsSpecial(style) then
+            -- if BACKSPACE is used at tab stop, with spaces for indentation,
+            -- and only whilespaces on the left, reduce indent
+            if edcfg.backspaceunindent and keycode == wx.WXK_BACK and not editor:GetUseTabs() then
+              -- get the line number from the *current* position of the cursor
+              local line = editor:LineFromPosition(pos+1)
+              local text = editor:GetLine(line):sub(1, pos-editor:PositionFromLine(line)+1)
+              local tw = editor:GetIndent()
+              -- if on the tab stop position and only white spaces on the left
+              if text:find('^%s+$') and #text % tw == 0 then
+                editor:SetLineIndentation(line, editor:GetLineIndentation(line) - tw)
+                editor:GotoPos(pos+1-tw)
+                return
+              end
+            end
             event:Skip()
             return
           end
@@ -1392,19 +1442,26 @@ end
 -- Add an editor to the notebook
 function AddEditor(editor, name)
   assert(notebook:GetPageIndex(editor) == -1, "Editor being added is not in the notebook: failed")
-  if notebook:AddPage(editor, name, true) then
-    local id = editor:GetId()
-    local document = setmetatable({}, ide.proto.Document)
-    document.editor = editor
+
+  -- set the document properties
+  local id = editor:GetId()
+  local document = setmetatable({}, ide.proto.Document)
+  document.editor = editor
+  document.fileName = name
+  document.filePath = nil
+  document.modTime = nil
+  document.isModified = false
+  openDocuments[id] = document
+
+  -- add page only after document is created as there may be handlers
+  -- that expect the document (for example, onEditorFocusSet)
+  if not notebook:AddPage(editor, name, true) then
+    openDocuments[id] = nil
+    return
+  else
     document.index = notebook:GetPageIndex(editor)
-    document.fileName = name
-    document.filePath = nil
-    document.modTime = nil
-    document.isModified = false
-    openDocuments[id] = document
     return document
   end
-  return
 end
 
 function GetSpec(ext,forcespec)
@@ -1469,69 +1526,12 @@ function SetupKeywords(editor, ext, forcespec, styles, font, fontitalic)
   editor:SetProperty("lexer.cpp.track.preprocessor", "0")
   editor:SetProperty("lexer.cpp.update.preprocessor", "0")
 
+  -- create italic font if only main font is provided
+  if font and not fontitalic then
+    fontitalic = wx.wxFont(font)
+    fontitalic:SetStyle(wx.wxFONTSTYLE_ITALIC)
+  end
+
   StylesApplyToEditor(styles or ide.config.styles, editor,
     font or ide.font.eNormal,fontitalic or ide.font.eItalic,lexerstyleconvert)
 end
-
-----------------------------------------------------
--- function list for current file
-
-local function refreshFunctionList(event)
-  event:Skip()
-
-  local editor = GetEditor()
-  if (editor and not (editor.spec and editor.spec.isfndef)) then return end
-
-  -- parse current file and update list
-  -- first populate with the current label to minimize flicker
-  -- then populate the list and update the label
-  local current = funclist:GetCurrentSelection()
-  local label = funclist:GetString(current)
-  local default = funclist:GetString(0)
-  funclist:Clear()
-  funclist:Append(current ~= wx.wxNOT_FOUND and label or default, 0)
-  funclist:SetSelection(0)
-
-  local lines = 0
-  local linee = (editor and editor:GetLineCount() or 0)-1
-  for line=lines,linee do
-    local tx = editor:GetLine(line)
-    local s,_,cap,l = editor.spec.isfndef(tx)
-    if (s) then
-      local ls = editor:PositionFromLine(line)
-      local style = bit.band(editor:GetStyleAt(ls+s),31)
-      if not (editor.spec.iscomment[style] or editor.spec.isstring[style]) then
-        funclist:Append((l and "  " or "")..cap,line)
-      end
-    end
-  end
-
-  funclist:SetString(0, default)
-  funclist:SetSelection(current ~= wx.wxNOT_FOUND and current or 0)
-end
-
--- wx.wxEVT_SET_FOCUS is not triggered for wxChoice on Mac (wx 2.8.12),
--- so use wx.wxEVT_LEFT_DOWN instead; none of the events are triggered for
--- wxChoice on Linux (wx 2.9.5+), so use EVT_ENTER_WINDOW attached to the
--- toolbar itself until something better is available.
-if ide.osname == 'Unix' then
-  ide.frame.toolBar:Connect(wx.wxEVT_ENTER_WINDOW, refreshFunctionList)
-else
-  local event = ide.osname == 'Macintosh' and wx.wxEVT_LEFT_DOWN or wx.wxEVT_SET_FOCUS
-  funclist:Connect(event, refreshFunctionList)
-end
-
-funclist:Connect(wx.wxEVT_COMMAND_CHOICE_SELECTED,
-  function (event)
-    -- test if updated
-    -- jump to line
-    event:Skip()
-    local l = event:GetClientData()
-    if (l and l > 0) then
-      local editor = GetEditor()
-      editor:GotoLine(l)
-      editor:SetFocus()
-      editor:SetSTCFocus(true)
-      editor:EnsureVisibleEnforcePolicy(l)
-    end
-  end)

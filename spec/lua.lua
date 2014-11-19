@@ -2,7 +2,6 @@
 ---------------------------------------------------------
 
 local funcdef = "([A-Za-z_][A-Za-z0-9_%.%:]*)%s*"
-local funccall = "([A-Za-z_][A-Za-z0-9_]*)%s*"
 local decindent = {
   ['else'] = true, ['elseif'] = true, ['until'] = true, ['end'] = true}
 local incindent = {
@@ -25,7 +24,6 @@ local function isfndef(str)
   end
   return s,e,cap,l
 end
-
 local q = EscapeMagic
 
 return {
@@ -34,10 +32,6 @@ return {
   apitype = "lua",
   linecomment = "--",
   sep = ".:",
-  isfncall = function(str)
-    return string.find(str, funccall .. "[%({'\"]")
-  end,
-  isfndef = isfndef,
   isdecindent = function(str)
     str = str:gsub('%-%-%[=*%[.*%]=*%]',''):gsub('%-%-.*','')
     -- this handles three different cases:
@@ -86,14 +80,15 @@ return {
 
     return opened - closed + func + terminc - ended
   end,
-  markvars = function(code, pos, vars)
+  marksymbols = function(code, pos, vars)
     local PARSE = require 'lua_parser_loose'
     local LEX = require 'lua_lexer_loose'
     local lx = LEX.lexc(code, nil, pos)
     return coroutine.wrap(function()
       local varnext = {}
-      PARSE.parse_scope_resolve(lx, function(op, name, lineinfo, vars)
+      PARSE.parse_scope_resolve(lx, function(op, name, lineinfo, vars, nobreak)
         if not(op == 'Id' or op == 'Statement' or op == 'Var'
+            or op == 'Function' or op == 'String'
             or op == 'VarNext' or op == 'VarInside' or op == 'VarSelf'
             or op == 'FunctionCall' or op == 'Scope' or op == 'EndScope') then
           return end -- "normal" return; not interested in other events
@@ -105,10 +100,10 @@ return {
           for _, token in pairs(varnext) do coroutine.yield(unpack(token)) end
           varnext = {}
         elseif op == 'VarNext' or op == 'VarInside' then
-          table.insert(varnext, {'Var', name, lineinfo, vars, at})
+          table.insert(varnext, {'Var', name, lineinfo, vars, at, nobreak})
         end
 
-        coroutine.yield(op, name, lineinfo, vars, at)
+        coroutine.yield(op, name, lineinfo, vars, op == 'Function' and at-1 or at, nobreak)
       end, vars)
     end)
   end,
