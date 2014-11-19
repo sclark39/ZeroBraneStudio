@@ -19,17 +19,32 @@ local interpreter = {
   name = "NS2",
   description = "Natural Selection 2",
   api = {"baselib", "sample"},
-  frun = function(self,wfilename,rundebug)
+  frun = function(self,wfilename,rundebug)	  
 	local ns2dir = ns2config 'dir'
+	local workDir
 	local args = ""
 	if ns2config 'runasmod' then
-		local workDir = MergeFullPath(ide:GetProject(), ns2config 'modroot' )
+		workDir = MergeFullPath(ide:GetProject(), ns2config 'modroot' )
 		if not wx.wxDirExists( workDir ) then
 			workDir = string.sub( ide:GetProject(), 1, -2 )
 		end
 		args = string.format( '-game "%s" %s', workDir, ns2config 'args' )
+		CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, ns2dir, true, false)
+	else
+		workDir = string.sub( ide:GetProject(), 1, -2 )
+        
+        do
+            DisplayOutputLn( MergeFullPath( workDir, "directories.txt" ) )
+            local f = io.open( MergeFullPath( workDir, "directories.txt" ), "w+" )
+            f:write( ns2dir )
+            f:close()
+        end
+        
+		args = string.format( '%s', ns2dir, ns2config 'args' )
+		DisplayOutputLn( '"'.. ns2dir .. 'ns2.exe" '..args )
+		DisplayOutputLn( workDir )
+		CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, workDir, true, false)
 	end
-    CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, ns2dir, true, false)
   end,
   fprojdir = function(self,wfilename)  
     return wfilename:GetPath(wx.wxPATH_GET_VOLUME)
