@@ -40,9 +40,7 @@ local interpreter = {
             f:close()
         end
         
-		args = string.format( '%s', ns2dir, ns2config 'args' )
-		DisplayOutputLn( '"'.. ns2dir .. 'ns2.exe" '..args )
-		DisplayOutputLn( workDir )
+		args = string.format( '%s', ns2config 'args' )
 		CommandLineRun(	'"'.. ns2dir .. 'ns2.exe" '..args, workDir, true, false)
 	end
   end,
